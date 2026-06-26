@@ -1,0 +1,24 @@
+{:tasks
+ ;; Tests run via JVM clojure aliases (deps.edn :spec / :features), matching the
+ ;; sibling modules (acp/cron/hail). When ../isaac-server exists, :dev-local
+ ;; overrides the pinned foundation/server deps with local siblings so cross-repo
+ ;; edits land without pushing. Set ISAAC_GIT=1 to force the pinned git shas.
+ {:init (def ^:private alias-prefix
+          (if (and (not (System/getenv "ISAAC_GIT"))
+                   (babashka.fs/exists? "../isaac-server"))
+            "-M:dev-local"
+            "-M"))
+
+  spec     {:doc  "Run cli-server unit specs"
+            :task (apply shell "clojure" (str alias-prefix ":spec") *command-line-args*)}
+
+  features {:doc  "Run cli-server features (excludes @slow and @wip)"
+            :task (do (babashka.fs/delete-tree "target")
+                      (apply shell "clojure" (str alias-prefix ":features") *command-line-args*))}
+
+  ci       {:doc  "Run all specs and features"
+            :task (do (shell "bb" "spec")
+                      (shell "bb" "features"))}
+
+  clean    {:doc  "Remove the target/ build dir"
+            :task (babashka.fs/delete-tree "target")}}}

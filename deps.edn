@@ -1,0 +1,44 @@
+{:paths ["src"]
+
+ ;; isaac-cli-server is a module: it contributes the /cli WebSocket route
+ ;; (:isaac.server/route berth), generalizing the ACP /acp endpoint. It runs
+ ;; the main isaac CLI dispatch with a remote client's argv and pipes process
+ ;; IO back over the socket. See PROTOCOL.md.
+ :deps  {io.github.slagyr/isaac-foundation {:git/url "https://github.com/slagyr/isaac-foundation.git"
+                                            :git/sha "305c337a69427cebbd2ae5471ac6684f0ae321a5"}
+         io.github.slagyr/isaac-server     {:git/url "https://github.com/slagyr/isaac-server.git"
+                                            :git/sha "2fb78f44a2dfed5159713089b506eb9d3ee587da"}
+         clout/clout                 {:mvn/version "1.1.0"}
+         com.cleancoders.c3kit/apron {:mvn/version "3.0.0"}
+         cheshire/cheshire           {:mvn/version "5.13.0"}
+         http-kit/http-kit           {:mvn/version "2.8.0"}
+         ring/ring-codec             {:mvn/version "1.2.0"}
+         org.clojure/tools.cli       {:mvn/version "1.1.230"}}
+
+ :aliases
+ {:dev-local {:override-deps {io.github.slagyr/isaac-server                  {:local/root "../isaac-server"}
+                              io.github.slagyr/isaac-foundation              {:local/root "../isaac-foundation"}
+                              io.github.slagyr/isaac-foundation-spec         {:local/root "../isaac-foundation/spec"}
+                              io.github.slagyr/isaac-foundation-test-support {:local/root "../isaac-foundation/spec-support"}
+                              io.github.slagyr/isaac-server-test-support     {:local/root "../isaac-server/spec-support"}
+                              marigold.bridge/marigold.bridge                {:local/root "../isaac-foundation/modules/marigold.bridge"}
+                              marigold.longwave/marigold.longwave            {:local/root "../isaac-foundation/modules/marigold.longwave"}}}
+
+  :spec {:extra-paths ["spec"]
+         :extra-deps  {io.github.slagyr/isaac-foundation-spec         {:git/url "https://github.com/slagyr/isaac-foundation.git" :git/sha "305c337a69427cebbd2ae5471ac6684f0ae321a5" :deps/root "spec"}
+                       io.github.slagyr/isaac-foundation-test-support {:git/url "https://github.com/slagyr/isaac-foundation.git" :git/sha "305c337a69427cebbd2ae5471ac6684f0ae321a5" :deps/root "spec-support"}
+                       io.github.slagyr/isaac-server-test-support     {:git/url "https://github.com/slagyr/isaac-server.git" :git/sha "2fb78f44a2dfed5159713089b506eb9d3ee587da" :deps/root "spec-support"}
+                       speclj/speclj            {:mvn/version "3.13.0"}
+                       babashka/process         {:mvn/version "0.5.22"}
+                       io.github.slagyr/gherclj {:git/tag "v1.3.0" :git/sha "9c3bb1d"}}
+         :main-opts   ["-m" "speclj.main" "-c" "-D" "spec"]}
+
+  :features {:extra-paths ["spec"]
+             :extra-deps  {io.github.slagyr/isaac-foundation-spec         {:git/url "https://github.com/slagyr/isaac-foundation.git" :git/sha "305c337a69427cebbd2ae5471ac6684f0ae321a5" :deps/root "spec"}
+                           io.github.slagyr/isaac-foundation-test-support {:git/url "https://github.com/slagyr/isaac-foundation.git" :git/sha "305c337a69427cebbd2ae5471ac6684f0ae321a5" :deps/root "spec-support"}
+                           io.github.slagyr/isaac-server-test-support     {:git/url "https://github.com/slagyr/isaac-server.git" :git/sha "2fb78f44a2dfed5159713089b506eb9d3ee587da" :deps/root "spec-support"}
+                           speclj/speclj            {:mvn/version "3.13.0"}
+                           babashka/process         {:mvn/version "0.5.22"}
+                           io.github.slagyr/gherclj {:git/tag "v1.3.0" :git/sha "9c3bb1d"}
+                           org.babashka/http-client {:mvn/version "0.4.22"}}
+             :main-opts   ["-m" "gherclj.main" "-f" "features" "-s" "isaac.**-steps" "-t" "~slow" "-t" "~wip"]}}}

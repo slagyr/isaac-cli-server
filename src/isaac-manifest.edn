@@ -1,0 +1,10 @@
+{:id          :isaac.cli-server
+ :version     "0.1.0"
+ :factory     isaac.module.protocol/module
+ :description "Remote CLI server: a /cli WebSocket endpoint that runs isaac CLI commands server-side and pipes process IO back. Generalizes the ACP /acp route. See PROTOCOL.md."
+
+ ;; HTTP route contributed via the :isaac.server/route berth, exactly like /acp.
+ ;; The handler authenticates at the upgrade, then runs the main CLI dispatch
+ ;; with the client's handshake argv and frames the process IO.
+ :isaac.server/route
+ [{:method :get :path "/cli" :handler isaac.cli-server.ws/handler}]}
