@@ -33,7 +33,7 @@
                        io.github.slagyr/gherclj {:git/tag "v1.3.0" :git/sha "9c3bb1d"}}
          :main-opts   ["-m" "speclj.main" "-c" "-D" "spec"]}
 
-  :features {:extra-paths ["spec"]
+  :features {:extra-paths ["spec" "features"]
              :extra-deps  {io.github.slagyr/isaac-foundation-spec         {:git/url "https://github.com/slagyr/isaac-foundation.git" :git/sha "305c337a69427cebbd2ae5471ac6684f0ae321a5" :deps/root "spec"}
                            io.github.slagyr/isaac-foundation-test-support {:git/url "https://github.com/slagyr/isaac-foundation.git" :git/sha "305c337a69427cebbd2ae5471ac6684f0ae321a5" :deps/root "spec-support"}
                            io.github.slagyr/isaac-server-test-support     {:git/url "https://github.com/slagyr/isaac-server.git" :git/sha "2fb78f44a2dfed5159713089b506eb9d3ee587da" :deps/root "spec-support"}

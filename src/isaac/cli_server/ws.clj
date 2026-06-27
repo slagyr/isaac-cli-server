@@ -1,26 +1,47 @@
 (ns isaac.cli-server.ws
   "WebSocket handler for the /cli remote-CLI endpoint.
 
-   Generalizes isaac.comm.acp.websocket/handler: authenticate at the HTTP
-   upgrade, then — instead of speaking ACP JSON-RPC — run the main isaac CLI
-   dispatch with the client's handshake argv, piping the process's
-   stdin/stdout/stderr and exit code over the socket as framed JSON messages.
+   Generalizes isaac.comm.acp.websocket/handler: upgrade the socket, then run
+   the main isaac CLI dispatch with the client's handshake argv and frame the
+   process IO back. HTTP auth is enforced by isaac-server before this handler.
 
-   See PROTOCOL.md for the wire contract.")
+   See PROTOCOL.md for the wire contract."
+  (:require
+    [cheshire.core :as json]
+    [isaac.cli-server.dispatch :as dispatch]
+    [isaac.logger :as log]
+    [org.httpkit.server :as httpkit]))
 
-;; ---------------------------------------------------------------------------
-;; M1 TODO:
-;;   - require :websocket? on the ring request; reject non-ws with 400.
-;;   - auth at upgrade (reuse the server's bearer-token check, as /acp does);
-;;     reject unauthenticated with 401, no socket.
-;;   - on {:type "start" :argv [...] :cwd ...}: run the dispatch, stream
-;;     {:type "stdout" :data <b64>} frames, then {:type "exit" :code N}; close.
-;;   - empty argv -> usage on stdout + exit 0.
-;; ---------------------------------------------------------------------------
+(defn- request-client [request]
+  (or (get-in request [:headers "x-forwarded-for"])
+      (:remote-addr request)
+      "unknown"))
+
+(def ^:dynamic *frame-sender*
+  "When bound, `(f channel json-string)` replaces httpkit/send! (handler tests)."
+  nil)
+
+(defn- send-frame! [channel frame]
+  (let [payload (json/generate-string frame)]
+    (if *frame-sender*
+      (*frame-sender* channel payload)
+      (httpkit/send! channel payload))))
 
 (defn handler
-  "Ring handler for GET /cli. Placeholder until M1."
-  [_request]
-  {:status  501
-   :headers {"content-type" "text/plain"}
-   :body    "isaac-cli-server: /cli not implemented yet (M1)"})
+  "Ring handler for GET /cli."
+  [request]
+  (if-not (:websocket? request)
+    {:status  400
+     :headers {"Content-Type" "text/plain"}
+     :body    "websocket required"}
+    (httpkit/as-channel request
+      {:on-open    (fn [channel]
+                     (log/debug :cli-ws/connection-opened
+                                :client (request-client request)
+                                :uri    (:uri request)))
+       :on-close   (fn [_channel _status]
+                     (log/debug :cli-ws/connection-closed
+                                :client (request-client request)
+                                :uri    (:uri request)))
+       :on-receive (fn [channel line]
+                     (dispatch/receive-line! channel line #(send-frame! channel %)))})))
