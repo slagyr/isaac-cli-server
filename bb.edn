@@ -1,4 +1,4 @@
-{:paths ["src" "spec" "features" "."]
+{:paths ["src" "spec" "features"]
 
  ;; Babashka runs specs/features directly (no clojure subprocess). Git coords
  ;; match deps.edn — keep SHAs in sync when bumping foundation/server.
@@ -31,16 +31,29 @@
 
  :tasks
  {spec     {:doc  "Run cli-server unit specs (pass file/dir to narrow)"
-            :requires ([bb.test-tasks :as tests])
-            :task     (apply tests/run-spec! *command-line-args*)}
+            :requires ([speclj.main :as speclj])
+            :task     (if (seq *command-line-args*)
+                        (apply speclj/-main "-c" "-D" "spec" *command-line-args*)
+                        (speclj/-main "-c" "-D" "spec"))}
 
   features {:doc  "Run cli-server features (excludes @slow and @wip)"
-            :requires ([bb.test-tasks :as tests])
-            :task     (apply tests/run-features! *command-line-args*)}
+            :requires ([gherclj.main :as gherclj])
+            :task     (do
+                        (babashka.fs/delete-tree "target")
+                        (println "Cleaned target/")
+                        (apply gherclj/-main
+                          (concat ["-f" "features"]
+                                  ["-s" "isaac.**-steps" "-t" "~slow" "-t" "~wip"]
+                                  *command-line-args*)))}
 
   ci       {:doc  "Run all specs and features"
-            :requires ([bb.test-tasks :as tests])
-            :task     (tests/run-ci!)}
+            :task     (do
+                        (let [spec-result (if (seq *command-line-args*)
+                                            (apply shell "bb" "spec" *command-line-args*)
+                                            (shell "bb" "spec"))
+                              feat-result (shell "bb" "features")]
+                          (when (pos? (:exit spec-result)) (System/exit (:exit spec-result)))
+                          (when (pos? (:exit feat-result)) (System/exit (:exit feat-result)))))}
 
   clean    {:doc  "Remove the target/ build dir"
             :task (babashka.fs/delete-tree "target")}}}
