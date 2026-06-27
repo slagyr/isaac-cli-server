@@ -19,35 +19,20 @@ jobs:
       - name: Check out isaac-cli-server
         uses: actions/checkout@v4
 
-      - name: Check out isaac-foundation
-        run: git clone --depth 1 https://github.com/slagyr/isaac-foundation.git ../isaac-foundation
-
-      - name: Check out isaac-server
-        run: git clone --depth 1 https://github.com/slagyr/isaac-server.git ../isaac-server
-
-      - name: Set up Java
-        uses: actions/setup-java@v4
+      - name: Set up Babashka
+        uses: babashka/setup-babashka@v1
         with:
-          distribution: temurin
-          java-version: '21'
+          bb-version: latest
 
-      - name: Set up Clojure and Babashka
-        uses: DeLaGuardo/setup-clojure@13.2
-        with:
-          bb: latest
-          cli: latest
-
-      - name: Cache Clojure dependencies
+      - name: Cache Babashka dependencies
         uses: actions/cache@v4
         with:
           path: |
             ~/.m2/repository
             ~/.gitlibs
-            ~/.deps.clj
-            .cpcache
-          key: ${{ runner.os }}-clojure-cli-server-${{ hashFiles('**/deps.edn', '**/bb.edn') }}
+          key: ${{ runner.os }}-bb-cli-server-${{ hashFiles('bb.edn') }}
           restore-keys: |
-            ${{ runner.os }}-clojure-cli-server-
+            ${{ runner.os }}-bb-cli-server-
 
       - name: Run bb ci
         run: bb ci
