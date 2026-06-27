@@ -1,24 +1,37 @@
-{:tasks
- ;; Tests run via JVM clojure aliases (deps.edn :spec / :features), matching the
- ;; sibling modules (acp/cron/hail). When ../isaac-server exists, :dev-local
- ;; overrides the pinned foundation/server deps with local siblings so cross-repo
- ;; edits land without pushing. Set ISAAC_GIT=1 to force the pinned git shas.
- {:init (def ^:private alias-prefix
-          (if (and (not (System/getenv "ISAAC_GIT"))
-                   (babashka.fs/exists? "../isaac-server"))
-            "-M:dev-local"
-            "-M"))
+{:paths ["src" "spec" "features" "."]
 
-  spec     {:doc  "Run cli-server unit specs"
-            :task (apply shell "clojure" (str alias-prefix ":spec") *command-line-args*)}
+ ;; Babashka runs specs/features directly (no clojure subprocess). Sibling
+ ;; checkouts under ../isaac-foundation and ../isaac-server are required —
+ ;; CI clones them; see .github/workflows/ci-tests.yml.
+ :deps  {io.github.slagyr/isaac-foundation              {:local/root "../isaac-foundation"}
+         io.github.slagyr/isaac-foundation-spec         {:local/root "../isaac-foundation/spec"}
+         io.github.slagyr/isaac-foundation-test-support {:local/root "../isaac-foundation/spec-support"}
+         io.github.slagyr/isaac-server                  {:local/root "../isaac-server"}
+         marigold.bridge/marigold.bridge                {:local/root "../isaac-foundation/modules/marigold.bridge"}
+         marigold.longwave/marigold.longwave            {:local/root "../isaac-foundation/modules/marigold.longwave"}
+         clout/clout                                    {:mvn/version "1.1.0"}
+         com.cleancoders.c3kit/apron                    {:mvn/version "3.0.0"}
+         cheshire/cheshire                              {:mvn/version "5.13.0"}
+         http-kit/http-kit                              {:mvn/version "2.8.0"}
+         ring/ring-codec                                {:mvn/version "1.2.0"}
+         org.clojure/tools.cli                          {:mvn/version "1.1.230"}
+         org.babashka/http-client                       {:mvn/version "0.4.22"}
+         babashka/process                               {:mvn/version "0.5.22"}
+         speclj/speclj                                  {:mvn/version "3.13.0"}
+         io.github.slagyr/gherclj                       {:git/tag "v1.3.0" :git/sha "9c3bb1d"}}
+
+ :tasks
+ {spec     {:doc  "Run cli-server unit specs (pass file/dir to narrow)"
+            :requires ([bb.test-tasks :as tests])
+            :task     (apply tests/run-spec! *command-line-args*)}
 
   features {:doc  "Run cli-server features (excludes @slow and @wip)"
-            :task (do (babashka.fs/delete-tree "target")
-                      (apply shell "clojure" (str alias-prefix ":features") *command-line-args*))}
+            :requires ([bb.test-tasks :as tests])
+            :task     (apply tests/run-features! *command-line-args*)}
 
   ci       {:doc  "Run all specs and features"
-            :task (do (shell "bb" "spec")
-                      (shell "bb" "features"))}
+            :requires ([bb.test-tasks :as tests])
+            :task     (tests/run-ci!)}
 
   clean    {:doc  "Remove the target/ build dir"
             :task (babashka.fs/delete-tree "target")}}}
