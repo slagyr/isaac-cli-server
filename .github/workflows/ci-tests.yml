@@ -1,0 +1,53 @@
+name: CI Tests
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    env:
+      NO_COLOR: "1"
+    steps:
+      - name: Check out isaac-cli-server
+        uses: actions/checkout@v4
+
+      - name: Check out isaac-foundation
+        run: git clone --depth 1 https://github.com/slagyr/isaac-foundation.git ../isaac-foundation
+
+      - name: Check out isaac-server
+        run: git clone --depth 1 https://github.com/slagyr/isaac-server.git ../isaac-server
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Set up Clojure and Babashka
+        uses: DeLaGuardo/setup-clojure@13.2
+        with:
+          bb: latest
+          cli: latest
+
+      - name: Cache Clojure dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.m2/repository
+            ~/.gitlibs
+            ~/.deps.clj
+            .cpcache
+          key: ${{ runner.os }}-clojure-cli-server-${{ hashFiles('**/deps.edn', '**/bb.edn') }}
+          restore-keys: |
+            ${{ runner.os }}-clojure-cli-server-
+
+      - name: Run bb ci
+        run: bb ci
