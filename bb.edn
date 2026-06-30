@@ -8,7 +8,7 @@
                                                           :git/sha "305c337a69427cebbd2ae5471ac6684f0ae321a5"
                                                           :deps/root "spec"}
          io.github.slagyr/isaac-foundation-test-support {:git/url "https://github.com/slagyr/isaac-foundation.git"
-                                                            :git/sha "305c337a69427cebbd2ae5471ac6684f0ae321a5"
+                                                            :git/sha "44e824c6eded90301ed1aba8ed3948c66725ee43"
                                                             :deps/root "spec-support"}
          io.github.slagyr/isaac-server                  {:git/url "https://github.com/slagyr/isaac-server.git"
                                                           :git/sha "2fb78f44a2dfed5159713089b506eb9d3ee587da"}
@@ -30,8 +30,9 @@
          io.github.slagyr/gherclj                       {:git/tag "v1.3.0" :git/sha "9c3bb1d"}}
 
  :tasks
- {config-bypass-lint {:doc "Fail on raw config slurp/read outside isaac.config.*"
-                      :task (shell "bb" "config_bypass_lint.bb" "src")}
+ {config-bypass-lint {:doc "Fail on raw config slurp/read outside isaac.config.* (isaac-foundation-test-support)"
+                      :requires ([isaac.foundation.config-bypass-lint :as lint])
+                      :task (apply lint/lint! (or (seq *command-line-args*) ["src"]))}
 
   spec     {:doc  "Run cli-server unit specs (pass file/dir to narrow)"
             :requires ([speclj.main :as speclj])
