@@ -1,0 +1,35 @@
+name: CI Failure Hail
+
+on:
+  workflow_run:
+    workflows:
+      - CI Tests
+    types:
+      - completed
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  hail-on-regression:
+    permissions:
+      contents: read
+      actions: read
+    uses: slagyr/orchestration/.github/workflows/ci-failure-hail-reusable.yml@main
+    with:
+      repository_owner: ${{ github.repository_owner }}
+      repository_name: ${{ github.event.repository.name }}
+      repository_full_name: ${{ github.repository }}
+      workflow_id: ${{ github.event.workflow_run.workflow_id }}
+      workflow_name: ${{ github.event.workflow_run.name }}
+      workflow_run_id: ${{ github.event.workflow_run.id }}
+      workflow_run_url: ${{ github.event.workflow_run.html_url }}
+      workflow_conclusion: ${{ github.event.workflow_run.conclusion }}
+      workflow_event: ${{ github.event.workflow_run.event }}
+      workflow_head_branch: ${{ github.event.workflow_run.head_branch }}
+      workflow_head_sha: ${{ github.event.workflow_run.head_sha }}
+      workflow_actor: ${{ github.event.workflow_run.actor.login }}
+    secrets:
+      ISAAC_HAIL_URL: ${{ secrets.ISAAC_HAIL_URL }}
+      ISAAC_SERVER_AUTH_TOKEN: ${{ secrets.ISAAC_SERVER_AUTH_TOKEN }}
