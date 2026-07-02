@@ -4,3 +4,4 @@
 /.lsp
 *.log
 .DS_Store
+*.iml
