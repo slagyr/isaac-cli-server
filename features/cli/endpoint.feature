@@ -72,3 +72,18 @@ Feature: /cli WebSocket endpoint
       | type   | data         | code |
       | stdout | #".*alive.*" |      |
       | exit   |              | 0    |
+
+  @wip
+  Scenario: the spawned command is always the isaac launcher with the client argv (isaac-895i)
+    argv never selects the binary — `isaac` is implied and the arguments are
+    applied to isaac main. There is no way to run an arbitrary program.
+    Given the cli-server handler with a recording spawn stub
+    When a /cli client sends start with argv ["sessions","list"]
+    Then the recorded spawn command is the isaac launcher with args ["sessions","list"]
+
+  @wip
+  Scenario: a dropped socket destroys the running subprocess (isaac-895i)
+    Given the cli-server handler with spawn command "sleep 60"
+    When a /cli client sends start with argv []
+    And the /cli client disconnects
+    Then the spawned subprocess is no longer running
