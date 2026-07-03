@@ -87,3 +87,15 @@ Feature: /cli WebSocket endpoint
     When a /cli client sends start with argv []
     And the /cli client disconnects
     Then the spawned subprocess is no longer running
+
+  @wip
+  Scenario: a dropped socket keeps the subprocess alive for the grace window, then destroys it (isaac-4tn1)
+    Supersedes the unconditional kill-on-disconnect above once reconnect lands:
+    disconnect enters the grace window; expiry destroys. Grace timing uses the
+    injectable clock, not wall-clock sleeps.
+    Given the cli-server handler with spawn command "sleep 60" and grace window 200 ms
+    When a /cli client sends start with argv []
+    And the /cli client disconnects
+    Then the spawned subprocess is still running
+    When the grace window elapses
+    Then the spawned subprocess is no longer running
