@@ -6,33 +6,33 @@ Feature: /cli WebSocket endpoint
     Given the cli-server handler
     When a /cli client sends start with argv ["--version"]
     Then the handler sends frames:
-      | type   | data     | code |
-      | stdout | #".*isaac.*" |      |
-      | exit   |          | 0    |
+      | type   | data            | code |
+      | stdout | #".*isaac.*"   |      |
+      | exit   |                 | 0    |
 
   Scenario: empty argv streams usage and exits zero
     Given the cli-server handler
     When a /cli client sends start with argv []
     Then the handler sends frames:
-      | type   | data      | code |
-      | stdout | #".*Usage.*"  |      |
-      | exit   |           | 0    |
+      | type   | data            | code |
+      | stdout | #".*Usage.*"   |      |
+      | exit   |                 | 0    |
 
   Scenario: CLI validation errors frame on stdout with nonzero exit
     Given the cli-server handler
     When a /cli client sends start with argv "logs,--bogus"
     Then the handler sends frames:
-      | type   | data                      | code |
-      | stdout | #".*Unknown option.*"    |      |
-      | exit   |                      | 1    |
+      | type   | data                    | code |
+      | stdout | #".*Unknown option.*"  |      |
+      | exit   |                         | 1    |
 
   Scenario: unknown commands exit nonzero with usage on stdout
     Given the cli-server handler
     When a /cli client sends start with argv ["not-a-command"]
     Then the handler sends frames:
-      | type   | data                | code |
+      | type   | data                     | code |
       | stdout | #".*Unknown command.*"  |      |
-      | exit   |                     | 1    |
+      | exit   |                          | 1    |
 
   Scenario: stdin frames are accepted after a batch command starts
     Given the cli-server handler
@@ -40,10 +40,10 @@ Feature: /cli WebSocket endpoint
     And the /cli client sends stdin "ignored"
     And the /cli client sends stdin-close
     Then the handler sends frames:
-      | type   | data     | code |
-      | stdout | #".*isaac.*" |      |
-      | exit   |          | 0    |
-  @wip
+      | type   | data            | code |
+      | stdout | #".*isaac.*"   |      |
+      | exit   |                 | 0    |
+
   Scenario: an interactive subprocess streams stdin to stdout before exit (isaac-895i)
     Commands run as subprocesses with piped stdio; frames stream as produced.
     cat only echoes what it is fed, so the stdout frame arriving before
@@ -59,7 +59,6 @@ Feature: /cli WebSocket endpoint
       | type | code |
       | exit | 0    |
 
-  @wip
   Scenario: a subprocess that kills itself is contained — the server keeps serving (isaac-895i)
     Given the cli-server handler with spawn command "sh -c 'exit 3'"
     When a /cli client sends start with argv []
@@ -69,11 +68,10 @@ Feature: /cli WebSocket endpoint
     Given the cli-server handler with spawn command "sh -c 'echo alive'"
     When a /cli client sends start with argv []
     Then the handler sends frames:
-      | type   | data         | code |
-      | stdout | #".*alive.*" |      |
-      | exit   |              | 0    |
+      | type   | data           | code |
+      | stdout | #".*alive.*"  |      |
+      | exit   |                | 0    |
 
-  @wip
   Scenario: the spawned command is always the isaac launcher with the client argv (isaac-895i)
     argv never selects the binary — `isaac` is implied and the arguments are
     applied to isaac main. There is no way to run an arbitrary program.
@@ -81,7 +79,6 @@ Feature: /cli WebSocket endpoint
     When a /cli client sends start with argv ["sessions","list"]
     Then the recorded spawn command is the isaac launcher with args ["sessions","list"]
 
-  @wip
   Scenario: a dropped socket destroys the running subprocess (isaac-895i)
     Given the cli-server handler with spawn command "sleep 60"
     When a /cli client sends start with argv []

@@ -6,8 +6,8 @@ this file in lockstep across both repos.
 
 The shape generalizes the ACP `/acp` route + `acp --remote` proxy: a WebSocket,
 authenticated at the HTTP upgrade, carrying framed IO — but **command-agnostic**.
-The server runs the *real* isaac CLI dispatch with the client's argv and pipes
-the process IO back.
+The server runs the real isaac launcher as a subprocess with the client's argv
+and pipes process IO back.
 
 ## Transport
 
@@ -57,11 +57,11 @@ client                                   server
 
 ## Execution model (server)
 
-Default: **subprocess per connection** — clean isolation for long-lived/
-streaming commands (acp) and per-session state. The handshake `argv` is run as
-`isaac <argv…>` (or equivalent dispatch) with its stdin/stdout/stderr wired to
-the frame streams. (In-process dispatch with bound `*in*/*out*/*err*` is an
-option for cheap batch commands; decided per-implementation, not in the wire.)
+Always **subprocess per connection** — clean isolation for long-lived and
+streaming commands, real stdio pipes, and containment for `System/exit` or
+other process-level failures. The handshake `argv` is run as `isaac <argv…>`.
+The client never chooses the binary; it only supplies args to the implied
+`isaac` launcher.
 
 ## Interactive & reconnect
 
@@ -70,7 +70,8 @@ option for cheap batch commands; decided per-implementation, not in the wire.)
 - **Reconnect** (proxy side) is a resilience concern, NOT part of M1. A dropped
   socket mid-command cannot be naively replayed (re-running re-executes). M3
   defines resumable-session semantics (carry over the ACP proxy's reconnect /
-  stdin-serialization work). Until then, a drop ends the invocation.
+  stdin-serialization work). Until then, a drop ends the invocation and the
+  server destroys the subprocess.
 
 ## Errors & exit codes
 

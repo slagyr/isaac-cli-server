@@ -1,11 +1,14 @@
 (ns isaac.cli-server.dispatch
   (:require
-    [cheshire.core :as json]
-    [isaac.main :as main]
     [babashka.process :as p]
+    [cheshire.core :as json]
     [ring.util.codec :as codec])
   (:import
-    (java.io ByteArrayOutputStream InputStreamReader BufferedReader PrintWriter)))
+    (java.io BufferedReader InputStreamReader PrintWriter)))
+
+(def ^:dynamic *spawn-process* nil)
+
+(defonce ^:private running-procs (atom {}))
 
 (defn- b64-encode [^String s]
   (when (seq s)
@@ -17,102 +20,77 @@
 (defn- send-error! [send! message]
   (send-frame! send! {:type "error" :message message}))
 
-(defn- stream-bytes! [send! type ^ByteArrayOutputStream buf]
-  (when-let [text (not-empty (str buf))]
-    (send-frame! send! {:type type :data (b64-encode text)})))
+(defn- spawn-options []
+  {:in :pipe :out :pipe :err :pipe})
 
-;; --- old in-process path (for non-wip batch scenarios during migration) ---
-(defn- run-argv! [argv _cwd send!]
-  (let [out-buf (ByteArrayOutputStream.)
-        err-buf (ByteArrayOutputStream.)
-        out-w   (PrintWriter. out-buf true)
-        err-w   (PrintWriter. err-buf true)
-        argv    (vec (or argv []))]
-    (binding [*out* out-w
-              *err* err-w]
-      (let [code (try
-                   (main/run argv)
-                   (catch Exception e
-                     (.printStackTrace e err-w)
-                     1))]
-        (.flush out-w)
-        (.flush err-w)
-        (stream-bytes! send! "stdout" out-buf)
-        (stream-bytes! send! "stderr" err-buf)
-        (send-frame! send! {:type "exit" :code (long code)})))))
+(defn- launcher-command [argv]
+  (into ["isaac"] (vec (or argv []))))
 
-;; --- new subprocess path (for 895i AC) ---
-(def ^:dynamic *spawn-command* nil)
-
-(defn- default-spawn [argv]
-  (p/process (into ["isaac"] (vec (or argv [])))
-             {:in :pipe :out :pipe :err :pipe}))
-
-(defn- effective-spawn [argv]
-  (cond
-    (fn? *spawn-command*) (*spawn-command* argv)
-    (vector? *spawn-command*) (p/process (into *spawn-command* (vec (or argv [])))
-                                         {:in :pipe :out :pipe :err :pipe})
-    :else (default-spawn argv)))
-
-(defonce ^:private running-procs (atom {})) ; ck -> {:proc proc :send! send! :stdin-writer writer}
+(defn- start-process! [argv]
+  (let [command (launcher-command argv)]
+    (if *spawn-process*
+      (*spawn-process* command)
+      (p/process command (spawn-options)))))
 
 (defn- channel-key [channel]
   (System/identityHashCode channel))
 
-(defn- start-streaming! [proc send! ck]
+(defn- stream-frames! [stream type send!]
   (future
     (try
-      (with-open [r (BufferedReader. (InputStreamReader. (:out proc)))]
+      (with-open [reader (BufferedReader. (InputStreamReader. stream))]
         (loop []
-          (when-let [line (.readLine r)]
-            (send! {:type "stdout" :data (b64-encode (str line "\n"))})
+          (when-let [line (.readLine reader)]
+            (send-frame! send! {:type type :data (b64-encode (str line "\n"))})
             (recur))))
-      (catch Exception _)))
+      (catch Exception _))))
 
+(defn- await-exit! [proc send! ck stdout-f stderr-f]
   (future
     (try
-      (with-open [r (BufferedReader. (InputStreamReader. (:err proc)))]
-        (loop []
-          (when-let [line (.readLine r)]
-            (send! {:type "stderr" :data (b64-encode (str line "\n"))})
-            (recur))))
-      (catch Exception _)))
-
-  (future
-    (try
-      (let [finished (p/check proc)
-            code (:exit finished)]
-        (send! {:type "exit" :code (long code)})
+      (let [process ^Process (:proc proc)]
+        (.waitFor process)
+        @stdout-f
+        @stderr-f
+        (send-frame! send! {:type "exit" :code (long (.exitValue process))})
         (swap! running-procs dissoc ck))
       (catch Exception e
-        (send! {:type "error" :message (.getMessage e)})))))
+        (send-error! send! (.getMessage e))))))
 
-(defn- run-subprocess! [argv send!]
-  (let [ck (channel-key send!)
-        proc (effective-spawn argv)
+(defn- start-streaming! [proc send! ck]
+  (let [stdout-f (stream-frames! (:out proc) "stdout" send!)
+        stderr-f (stream-frames! (:err proc) "stderr" send!)]
+    (await-exit! proc send! ck stdout-f stderr-f)))
+
+(defn- run-subprocess! [channel argv send!]
+  (let [ck           (channel-key channel)
+        proc         (start-process! argv)
         stdin-writer (PrintWriter. (:in proc) true)]
-    (swap! running-procs assoc ck {:proc proc :send! send! :stdin-writer stdin-writer})
+    (swap! running-procs assoc ck {:proc proc :stdin-writer stdin-writer})
     (start-streaming! proc send! ck)
     ck))
 
 (defn- send-stdin! [channel data]
   (let [ck (channel-key channel)]
-    (when-let [w (:stdin-writer (get @running-procs ck))]
+    (when-let [writer (:stdin-writer (get @running-procs ck))]
       (try
-        (.println w data)
+        (.println writer data)
         (catch Exception _)))))
 
 (defn- close-stdin! [channel]
   (let [ck (channel-key channel)]
     (when-let [{:keys [stdin-writer]} (get @running-procs ck)]
-      (try (.close stdin-writer) (catch Exception _)))
+      (try
+        (.close stdin-writer)
+        (catch Exception _)))
     (swap! running-procs update ck dissoc :stdin-writer)))
 
 (defn- kill-proc! [channel]
   (let [ck (channel-key channel)]
     (when-let [{:keys [proc]} (get @running-procs ck)]
-      (try (p/destroy proc) (catch Exception _)))
+      (try
+        (p/destroy proc)
+        (catch Exception _)))
     (swap! running-procs dissoc ck)))
 
 (defn receive-line!
@@ -124,9 +102,7 @@
         "start"
         (do
           (kill-proc! channel)
-          (if *spawn-command*
-            (run-subprocess! (:argv msg) send!)
-            (run-argv! (:argv msg) (:cwd msg) send!)))
+          (run-subprocess! channel (:argv msg) send!))
 
         "stdin"
         (send-stdin! channel

@@ -40,6 +40,7 @@
                                 :client (request-client request)
                                 :uri    (:uri request)))
        :on-close   (fn [channel _status]
+                     (dispatch/disconnect! channel)
                      (log/debug :cli-ws/connection-closed
                                 :client (request-client request)
                                 :uri    (:uri request)))
