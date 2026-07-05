@@ -25,8 +25,8 @@ the process IO back.
 ```
 client                                   server
   │  ── upgrade (Authorization: Bearer …) ──▶  auth; accept or 401
-  │  ── {"type":"start","argv":[…]} ───────▶  run dispatch(argv)
-  │  ◀── {"type":"stdout","data":"…"} ──────  (0..N, streamed)
+  │  ── {"type":"start","argv":[…]} ───────▶  spawn isaac <argv…> (subprocess)
+  │  ◀── {"type":"stdout","data":"…"} ──────  (0..N, streamed as produced)
   │  ◀── {"type":"stderr","data":"…"} ──────  (0..N, streamed, separate)
   │  ── {"type":"stdin","data":"…"} ───────▶  (0..N, interactive)
   │  ── {"type":"stdin-close"} ────────────▶  EOF to the command's stdin
@@ -38,10 +38,8 @@ client                                   server
 ### Client → Server
 
 - **start** (first frame, required):
-  `{"type":"start","argv":["prompt","-m","hi"],"cwd":"/abs/path"}`
+  `{"type":"start","argv":["prompt","-m","hi"]}`
   - `argv` — the command + args to run (NOT including `isaac`).
-  - `cwd` — optional. Absent → the server's working directory. Present → the
-    command runs with this cwd (subject to server policy).
   - An **empty `argv`** requests usage: the server replies with usage text on
     `stdout` and `exit 0`.
 - **stdin**: `{"type":"stdin","data":"<base64>"}` — bytes for the command's stdin.

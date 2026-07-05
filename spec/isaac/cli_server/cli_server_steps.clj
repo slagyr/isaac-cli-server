@@ -4,10 +4,12 @@
     [clojure.edn :as edn]
     [clojure.string :as str]
     [gherclj.core :as g :refer [defgiven defwhen defthen helper!]]
+    [isaac.cli-server.dispatch :as dispatch]
     [isaac.cli-server.ws :as ws]
     [isaac.step-tables :as match]
     [org.httpkit.server :as httpkit]
-    [ring.util.codec :as codec]))
+    [ring.util.codec :as codec]
+    [babashka.process :as p]))
 
 (helper! isaac.cli-server.cli-server-steps)
 

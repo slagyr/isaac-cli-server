@@ -39,7 +39,7 @@
                      (log/debug :cli-ws/connection-opened
                                 :client (request-client request)
                                 :uri    (:uri request)))
-       :on-close   (fn [_channel _status]
+       :on-close   (fn [channel _status]
                      (log/debug :cli-ws/connection-closed
                                 :client (request-client request)
                                 :uri    (:uri request)))

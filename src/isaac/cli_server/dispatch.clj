@@ -2,9 +2,10 @@
   (:require
     [cheshire.core :as json]
     [isaac.main :as main]
+    [babashka.process :as p]
     [ring.util.codec :as codec])
   (:import
-    (java.io ByteArrayOutputStream PrintWriter)))
+    (java.io ByteArrayOutputStream InputStreamReader BufferedReader PrintWriter)))
 
 (defn- b64-encode [^String s]
   (when (seq s)
@@ -20,6 +21,7 @@
   (when-let [text (not-empty (str buf))]
     (send-frame! send! {:type type :data (b64-encode text)})))
 
+;; --- old in-process path (for non-wip batch scenarios during migration) ---
 (defn- run-argv! [argv _cwd send!]
   (let [out-buf (ByteArrayOutputStream.)
         err-buf (ByteArrayOutputStream.)
@@ -39,13 +41,79 @@
         (stream-bytes! send! "stderr" err-buf)
         (send-frame! send! {:type "exit" :code (long code)})))))
 
-(defonce ^:private stdin-buffers (atom {}))
+;; --- new subprocess path (for 895i AC) ---
+(def ^:dynamic *spawn-command* nil)
+
+(defn- default-spawn [argv]
+  (p/process (into ["isaac"] (vec (or argv [])))
+             {:in :pipe :out :pipe :err :pipe}))
+
+(defn- effective-spawn [argv]
+  (cond
+    (fn? *spawn-command*) (*spawn-command* argv)
+    (vector? *spawn-command*) (p/process (into *spawn-command* (vec (or argv [])))
+                                         {:in :pipe :out :pipe :err :pipe})
+    :else (default-spawn argv)))
+
+(defonce ^:private running-procs (atom {})) ; ck -> {:proc proc :send! send! :stdin-writer writer}
 
 (defn- channel-key [channel]
   (System/identityHashCode channel))
 
-(defn- append-stdin! [channel chunk]
-  (swap! stdin-buffers update (channel-key channel) str (or chunk "")))
+(defn- start-streaming! [proc send! ck]
+  (future
+    (try
+      (with-open [r (BufferedReader. (InputStreamReader. (:out proc)))]
+        (loop []
+          (when-let [line (.readLine r)]
+            (send! {:type "stdout" :data (b64-encode (str line "\n"))})
+            (recur))))
+      (catch Exception _)))
+
+  (future
+    (try
+      (with-open [r (BufferedReader. (InputStreamReader. (:err proc)))]
+        (loop []
+          (when-let [line (.readLine r)]
+            (send! {:type "stderr" :data (b64-encode (str line "\n"))})
+            (recur))))
+      (catch Exception _)))
+
+  (future
+    (try
+      (let [finished (p/check proc)
+            code (:exit finished)]
+        (send! {:type "exit" :code (long code)})
+        (swap! running-procs dissoc ck))
+      (catch Exception e
+        (send! {:type "error" :message (.getMessage e)})))))
+
+(defn- run-subprocess! [argv send!]
+  (let [ck (channel-key send!)
+        proc (effective-spawn argv)
+        stdin-writer (PrintWriter. (:in proc) true)]
+    (swap! running-procs assoc ck {:proc proc :send! send! :stdin-writer stdin-writer})
+    (start-streaming! proc send! ck)
+    ck))
+
+(defn- send-stdin! [channel data]
+  (let [ck (channel-key channel)]
+    (when-let [w (:stdin-writer (get @running-procs ck))]
+      (try
+        (.println w data)
+        (catch Exception _)))))
+
+(defn- close-stdin! [channel]
+  (let [ck (channel-key channel)]
+    (when-let [{:keys [stdin-writer]} (get @running-procs ck)]
+      (try (.close stdin-writer) (catch Exception _)))
+    (swap! running-procs update ck dissoc :stdin-writer)))
+
+(defn- kill-proc! [channel]
+  (let [ck (channel-key channel)]
+    (when-let [{:keys [proc]} (get @running-procs ck)]
+      (try (p/destroy proc) (catch Exception _)))
+    (swap! running-procs dissoc ck)))
 
 (defn receive-line!
   "Handle one client JSON frame on `channel`. `send!` is invoked with wire maps."
@@ -55,16 +123,21 @@
       (case (:type msg)
         "start"
         (do
-          (swap! stdin-buffers dissoc (channel-key channel))
-          (run-argv! (:argv msg) (:cwd msg) send!))
+          (kill-proc! channel)
+          (if *spawn-command*
+            (run-subprocess! (:argv msg) send!)
+            (run-argv! (:argv msg) (:cwd msg) send!)))
 
         "stdin"
-        (append-stdin! channel
-                       (String. (.decode (java.util.Base64/getDecoder) (:data msg))))
+        (send-stdin! channel
+                     (String. (.decode (java.util.Base64/getDecoder) (:data msg))))
 
         "stdin-close"
-        (swap! stdin-buffers dissoc (channel-key channel))
+        (close-stdin! channel)
 
         (send-error! send! (str "unknown frame type: " (:type msg)))))
     (catch Exception e
       (send-error! send! (.getMessage e)))))
+
+(defn disconnect! [channel]
+  (kill-proc! channel))
