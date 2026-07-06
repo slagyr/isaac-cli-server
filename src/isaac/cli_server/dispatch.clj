@@ -2,6 +2,7 @@
   (:require
     [babashka.process :as p]
     [cheshire.core :as json]
+    [isaac.cli.args :as cli-args]
     [ring.util.codec :as codec])
   (:import
     (java.io BufferedReader InputStreamReader PrintWriter)
@@ -33,8 +34,10 @@
 (defn- send-error! [send! message]
   (send-frame! send! {:type "error" :message message}))
 
-(defn- spawn-options []
-  {:in :pipe :out :pipe :err :pipe})
+(defn- spawn-options [argv]
+  (let [{:keys [root]} (cli-args/extract-root-flag (vec (or argv [])))]
+    (cond-> {:in :pipe :out :pipe :err :pipe}
+      root (assoc :dir root))))
 
 (defn- launcher-command [argv]
   (into ["isaac"] (vec (or argv []))))
@@ -43,7 +46,7 @@
   (let [command (launcher-command argv)]
     (if *spawn-process*
       (*spawn-process* command)
-      (p/process command (spawn-options)))))
+      (p/process command (spawn-options argv)))))
 
 (defn- channel-key [channel]
   (System/identityHashCode channel))

@@ -13,10 +13,10 @@
 (describe "dispatch"
 
   (it "spawns the isaac launcher with the client argv and emits a stream-id"
-    (let [sent    (atom [])
-          send!   (fn [frame] (swap! sent conj frame))
-          channel (Object.)
-          spawned (atom nil)]
+    (let [sent     (atom [])
+          send!    (fn [frame] (swap! sent conj frame))
+          channel  (Object.)
+          spawned  (atom nil)]
       (binding [sut/*stream-id-factory* (constantly "stream-1")
                 sut/*spawn-process*     (fn [command]
                                           (reset! spawned command)
@@ -27,6 +27,23 @@
       (helper/await-condition #(some (fn [frame] (= "exit" (:type frame))) @sent) 5000)
       (should= ["isaac" "sessions" "list"] @spawned)
       (should= {:type "start-ack" :stream-id "stream-1"} (first @sent))
+      (should= 0 (:code (last @sent)))))
+
+  (it "spawns from the explicit root when argv carries --root"
+    (let [sent         (atom [])
+          send!        (fn [frame] (swap! sent conj frame))
+          channel      (Object.)
+          cwd          (atom nil)
+          real-process p/process]
+      (with-redefs [p/process (fn [_command opts]
+                                (reset! cwd (:dir opts))
+                                (real-process ["sh" "-c" "exit 0"] {:in :pipe :out :pipe :err :pipe}))]
+        (binding [sut/*stream-id-factory* (constantly "stream-1")]
+          (sut/receive-line! channel
+                             (json/generate-string {:type "start" :argv ["--root" "/tmp/fixture" "acp"]})
+                             send!)))
+      (helper/await-condition #(some (fn [frame] (= "exit" (:type frame))) @sent) 5000)
+      (should= "/tmp/fixture" @cwd)
       (should= 0 (:code (last @sent)))))
 
   (it "streams stderr separately from stdout for a spawned process"
