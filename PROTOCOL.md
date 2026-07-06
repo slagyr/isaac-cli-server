@@ -26,10 +26,13 @@ and pipes process IO back.
 client                                   server
   │  ── upgrade (Authorization: Bearer …) ──▶  auth; accept or 401
   │  ── {"type":"start","argv":[…]} ───────▶  spawn isaac <argv…> (subprocess)
+  │  ◀── {"type":"start-ack","stream-id":"…"}  resumable stream id
   │  ◀── {"type":"stdout","data":"…"} ──────  (0..N, streamed as produced)
   │  ◀── {"type":"stderr","data":"…"} ──────  (0..N, streamed, separate)
   │  ── {"type":"stdin","data":"…"} ───────▶  (0..N, interactive)
   │  ── {"type":"stdin-close"} ────────────▶  EOF to the command's stdin
+  │  ── socket drops ───────────────────────▶  server keeps subprocess for grace window
+  │  ── {"type":"attach","stream-id":"…"} ─▶  replay buffered frames; resume live stream
   │  ◀── {"type":"exit","code":N} ──────────  terminal; server closes socket
 ```
 
@@ -37,22 +40,30 @@ client                                   server
 
 ### Client → Server
 
-- **start** (first frame, required):
+- **start** (first frame on a fresh socket, required):
   `{"type":"start","argv":["prompt","-m","hi"]}`
   - `argv` — the command + args to run (NOT including `isaac`).
   - An **empty `argv`** requests usage: the server replies with usage text on
     `stdout` and `exit 0`.
+- **attach** (first frame on a replacement socket):
+  `{"type":"attach","stream-id":"abc123"}`
+  - `stream-id` — identifier previously issued by `start-ack`.
+  - Reattaches to a still-live subprocess inside the grace window.
+  - Server replays buffered frames produced while detached, then resumes live streaming.
 - **stdin**: `{"type":"stdin","data":"<base64>"}` — bytes for the command's stdin.
 - **stdin-close**: `{"type":"stdin-close"}` — closes the command's stdin (EOF).
 
 ### Server → Client
 
+- **start-ack**: `{"type":"start-ack","stream-id":"abc123"}`
+  - Sent once per started subprocess.
+  - `stream-id` is stable across reconnects for that subprocess lifetime.
 - **stdout**: `{"type":"stdout","data":"<base64>"}`
 - **stderr**: `{"type":"stderr","data":"<base64>"}` (kept distinct from stdout)
 - **exit** (terminal): `{"type":"exit","code":N}` — the command's exit code.
   The server then closes the socket. The proxy exits its own process with `N`.
 - **error**: `{"type":"error","message":"…"}` — a protocol/auth/spawn failure
-  with no process exit code (e.g. malformed handshake, command failed to start).
+  with no process exit code (e.g. malformed handshake, unknown `stream-id`).
   Terminal; server closes.
 
 ## Execution model (server)
@@ -63,20 +74,25 @@ other process-level failures. The handshake `argv` is run as `isaac <argv…>`.
 The client never chooses the binary; it only supplies args to the implied
 `isaac` launcher.
 
-## Interactive & reconnect
+## Reconnect and grace window
 
 - The socket stays **full-duplex open** until the command exits — long-lived
   commands (acp, chat) stream both directions for the whole session.
-- **Reconnect** (proxy side) is a resilience concern, NOT part of M1. A dropped
-  socket mid-command cannot be naively replayed (re-running re-executes). M3
-  defines resumable-session semantics (carry over the ACP proxy's reconnect /
-  stdin-serialization work). Until then, a drop ends the invocation and the
-  server destroys the subprocess.
+- When the socket drops after `start`, the server **does not immediately kill**
+  the subprocess. It starts a **grace window** timer.
+- While detached, the server buffers `stdout`, `stderr`, and terminal `exit`
+  frames for that `stream-id`.
+- If the client reattaches before grace expiry, the server replays buffered
+  frames exactly once, then resumes live delivery on the new socket.
+- If grace expires first, the server destroys the subprocess and drops the buffer.
+- Proxy UX: status text is written to **stderr only** — e.g.
+  `isaac remote: connection lost, reconnecting...` and
+  `isaac remote: reattached`.
 
 ## Errors & exit codes
 
 - Auth failure → `401` at upgrade (no frames).
-- Bad/missing `start` → `{"type":"error"}` then close.
+- Bad/missing `start` or bad `attach` → `{"type":"error"}` then close.
 - Command runs and exits → `{"type":"exit","code":N}`; `N` is the real code.
 - The proxy's process exit code MUST equal the server's reported `code`.
 

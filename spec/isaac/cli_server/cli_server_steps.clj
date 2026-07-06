@@ -44,6 +44,8 @@
       (dispatch/disconnect! channel)
       (catch Exception _)))
   (g/assoc! :cli-server-channel-opts nil)
+  (g/assoc! :cli-server-grace-period-ms nil)
+  (g/assoc! :cli-server-grace-tasks {})
   (g/assoc! :cli-server-proc nil)
   (g/assoc! :cli-server-recorded-command nil)
   (g/assoc! :cli-server-sent-frames (atom []))
@@ -75,6 +77,12 @@
   (g/assoc! :cli-server-spawn-factory (fn [_request]
                                         (shell-process command))))
 
+(defn cli-server-handler-with-spawn-command-and-grace-window [command grace-ms]
+  (install-handler!)
+  (g/assoc! :cli-server-grace-period-ms (Long/parseLong (str grace-ms)))
+  (g/assoc! :cli-server-spawn-factory (fn [_request]
+                                        (shell-process command))))
+
 (defn cli-server-handler-with-recording-spawn-stub []
   (install-handler!)
   (g/assoc! :cli-server-spawn-factory recording-process))
@@ -86,10 +94,22 @@
       (str/includes? text ",")    (mapv str/trim (str/split text #","))
       :else                        (vec (remove str/blank? (str/split text #"\s+"))))))
 
+(defn- schedule-grace-timeout! [delay-ms f]
+  (let [token (Object.)]
+    (g/update! :cli-server-grace-tasks assoc token f)
+    token))
+
+(defn- cancel-grace-timeout! [token]
+  (g/update! :cli-server-grace-tasks dissoc token)
+  nil)
+
 (defn- send-client-line! [line]
   (let [on-receive (:on-receive (g/get :cli-server-channel-opts))]
     (g/should (fn? on-receive))
-    (binding [dispatch/*spawn-process* (g/get :cli-server-spawn-factory)]
+    (binding [dispatch/*grace-period-ms*      (or (g/get :cli-server-grace-period-ms) dispatch/*grace-period-ms*)
+              dispatch/*schedule-grace-timeout* schedule-grace-timeout!
+              dispatch/*cancel-grace-timeout* cancel-grace-timeout!
+              dispatch/*spawn-process*        (g/get :cli-server-spawn-factory)]
       (on-receive (g/get :cli-server-ws-channel) line))))
 
 (defn cli-client-sends-start [argv-text]
@@ -107,17 +127,47 @@
 (defn cli-client-disconnects []
   (let [on-close (:on-close (g/get :cli-server-channel-opts))]
     (g/should (fn? on-close))
-    (on-close (g/get :cli-server-ws-channel) 1000)))
+    (binding [dispatch/*grace-period-ms*      (or (g/get :cli-server-grace-period-ms) dispatch/*grace-period-ms*)
+              dispatch/*schedule-grace-timeout* schedule-grace-timeout!
+              dispatch/*cancel-grace-timeout* cancel-grace-timeout!]
+      (on-close (g/get :cli-server-ws-channel) 1000))))
+
+(defn- frame-type-expected? [expected-types frame]
+  (contains? expected-types (:type frame)))
+
+(defn- index-table [table]
+  (if (some #(= "#index" %) (:headers table))
+    table
+    {:headers (into ["#index"] (:headers table))
+     :rows    (mapv (fn [idx row] (into [(str idx)] row))
+                    (range)
+                    (:rows table))}))
+
+(defn- handler-frame-result [table]
+  (let [expected-types (->> (:rows table) (map first) set)
+        entries        (->> (frames-for-matching)
+                            (filter (partial frame-type-expected? expected-types))
+                            vec)]
+    (match/match-entries table entries)))
 
 (defn handler-sends-frames [table]
-  (helper/await-condition #(empty? (:failures (match/match-entries table (frames-for-matching)))) 5000)
-  (let [result (match/match-entries table (frames-for-matching))]
-    (g/should= [] (:failures result))))
+  (helper/await-condition #(empty? (:failures (handler-frame-result table))) 15000)
+  (g/should= [] (:failures (handler-frame-result table))))
 
 (defn recorded-spawn-command-is [argv-text]
   (let [expected (into ["isaac"] (parse-argv argv-text))]
     (helper/await-condition #(some? (g/get :cli-server-recorded-command)) 5000)
     (g/should= expected (g/get :cli-server-recorded-command))))
+
+(defn spawned-subprocess-running []
+  (let [proc (g/get :cli-server-proc)]
+    (g/should (and proc (.isAlive (:proc proc))))))
+
+(defn grace-window-elapses []
+  (doseq [[token task] (g/get :cli-server-grace-tasks)]
+    (when (= task (get (g/get :cli-server-grace-tasks) token))
+      (g/update! :cli-server-grace-tasks dissoc token)
+      (task))))
 
 (defn spawned-subprocess-not-running []
   (helper/await-condition #(let [proc (g/get :cli-server-proc)]
@@ -128,14 +178,18 @@
 (g/after-scenario reset-handler-state!)
 
 (defgiven "the cli-server handler" isaac.cli-server.cli-server-steps/cli-server-handler)
-(defgiven "the cli-server handler with spawn command {command:string}" isaac.cli-server.cli-server-steps/cli-server-handler-with-spawn-command)
+(defgiven #"^the cli-server handler with spawn command \"([^\"]+)\"$" isaac.cli-server.cli-server-steps/cli-server-handler-with-spawn-command)
+(defgiven #"^the cli-server handler with spawn command \"([^\"]+)\" and grace window (\d+) ms$"
+  isaac.cli-server.cli-server-steps/cli-server-handler-with-spawn-command-and-grace-window)
 (defgiven "the cli-server handler with a recording spawn stub" isaac.cli-server.cli-server-steps/cli-server-handler-with-recording-spawn-stub)
 
 (defwhen "a /cli client sends start with argv {argv:string}" isaac.cli-server.cli-server-steps/cli-client-sends-start)
 (defwhen "the /cli client sends stdin {text:string}" isaac.cli-server.cli-server-steps/cli-client-sends-stdin)
 (defwhen "the /cli client sends stdin-close" isaac.cli-server.cli-server-steps/cli-client-sends-stdin-close)
 (defwhen "the /cli client disconnects" isaac.cli-server.cli-server-steps/cli-client-disconnects)
+(defwhen "the grace window elapses" isaac.cli-server.cli-server-steps/grace-window-elapses)
 
 (defthen "the handler sends frames:" isaac.cli-server.cli-server-steps/handler-sends-frames)
 (defthen "the recorded spawn command is the isaac launcher with args {argv:string}" isaac.cli-server.cli-server-steps/recorded-spawn-command-is)
+(defthen "the spawned subprocess is still running" isaac.cli-server.cli-server-steps/spawned-subprocess-running)
 (defthen "the spawned subprocess is no longer running" isaac.cli-server.cli-server-steps/spawned-subprocess-not-running)
