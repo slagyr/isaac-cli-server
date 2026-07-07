@@ -3,7 +3,7 @@ Feature: /cli WebSocket endpoint
   isaac-server before the handler runs; not asserted here.
 
   Scenario: a batch command streams stdout and exits zero
-    Given the cli-server handler
+    Given the cli-server handler with spawn command "echo isaac"
     When a /cli client sends start with argv ["--version"]
     Then the handler sends frames:
       | type   | data            | code |
@@ -11,7 +11,7 @@ Feature: /cli WebSocket endpoint
       | exit   |                 | 0    |
 
   Scenario: empty argv streams usage and exits zero
-    Given the cli-server handler
+    Given the cli-server handler with spawn command "echo Usage: isaac"
     When a /cli client sends start with argv []
     Then the handler sends frames:
       | type   | data            | code |
@@ -19,7 +19,7 @@ Feature: /cli WebSocket endpoint
       | exit   |                 | 0    |
 
   Scenario: CLI validation errors frame on stdout with nonzero exit
-    Given the cli-server handler
+    Given the cli-server handler with spawn command "echo Unknown option: --bogus; exit 1"
     When a /cli client sends start with argv "logs,--bogus"
     Then the handler sends frames:
       | type   | data                    | code |
@@ -27,7 +27,7 @@ Feature: /cli WebSocket endpoint
       | exit   |                         | 1    |
 
   Scenario: unknown commands exit nonzero with usage on stdout
-    Given the cli-server handler
+    Given the cli-server handler with spawn command "echo Unknown command: not-a-command; exit 1"
     When a /cli client sends start with argv ["not-a-command"]
     Then the handler sends frames:
       | type   | data                     | code |
@@ -35,7 +35,7 @@ Feature: /cli WebSocket endpoint
       | exit   |                          | 1    |
 
   Scenario: stdin frames are accepted after a batch command starts
-    Given the cli-server handler
+    Given the cli-server handler with spawn command "echo isaac"
     When a /cli client sends start with argv ["--version"]
     And the /cli client sends stdin "ignored"
     And the /cli client sends stdin-close
