@@ -89,3 +89,19 @@ Feature: /cli WebSocket endpoint
     Then the spawned subprocess is still running
     When the grace window elapses
     Then the spawned subprocess is no longer running
+
+  @wip
+  Scenario: a remote command execution is logged with argv, timing, and exit code (isaac-iouj)
+    No subprocess runs: the recording stub captures the spawn and simulates
+    completion, so the scenario proves the LOGGING contract, not sh. The /cli
+    endpoint executes arbitrary isaac commands for remote clients; grep :cli/
+    in the server log must reconstruct what it was asked to do, when, and how
+    each command exited (isaac-jnkp precedent).
+    Given the cli-server handler with a recording spawn stub that exits with code 7
+    When a /cli client sends start with argv ["sessions","list"]
+    Then the log has entries matching:
+      | level | event                | argv                | stream-id |
+      | :info | :cli/command-started | ["sessions" "list"] | #*        |
+    And the log has entries matching:
+      | level | event                 | code | duration-ms | stream-id |
+      | :info | :cli/command-finished | 7    | #*          | #*        |
