@@ -25,7 +25,7 @@ and pipes process IO back.
 ```
 client                                   server
   │  ── upgrade (Authorization: Bearer …) ──▶  auth; accept or 401
-  │  ── {"type":"start","argv":[…]} ───────▶  spawn isaac <argv…> (subprocess)
+  │  ── {"type":"start","argv":[…],"stdout-tty":true} ─▶  spawn isaac <argv…> (subprocess)
   │  ◀── {"type":"start-ack","stream-id":"…"}  resumable stream id
   │  ◀── {"type":"stdout","data":"…"} ──────  (0..N, streamed as produced)
   │  ◀── {"type":"stderr","data":"…"} ──────  (0..N, streamed, separate)
@@ -41,8 +41,12 @@ client                                   server
 ### Client → Server
 
 - **start** (first frame on a fresh socket, required):
-  `{"type":"start","argv":["prompt","-m","hi"]}`
+  `{"type":"start","argv":["prompt","-m","hi"],"stdout-tty":true}`
   - `argv` — the command + args to run (NOT including `isaac`).
+  - `stdout-tty` — optional boolean hint from the proxy that its local stdout is
+    a terminal. When true, the server may force terminal-oriented formatting
+    (for example ANSI color) in the spawned subprocess even though the server-side
+    transport is a pipe.
   - An **empty `argv`** requests usage: the server replies with usage text on
     `stdout` and `exit 0`.
 - **attach** (first frame on a replacement socket):

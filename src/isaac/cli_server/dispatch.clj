@@ -35,20 +35,21 @@
 (defn- send-error! [send! message]
   (send-frame! send! {:type "error" :message message}))
 
-(defn- spawn-options [argv]
+(defn- spawn-options [argv stdout-tty]
   (let [{:keys [root]} (cli-args/extract-root-flag (vec (or argv [])))]
     (cond-> {:in :pipe :out :pipe :err :pipe}
-      root (assoc :dir root))))
+      root       (assoc :dir root)
+      stdout-tty (assoc :extra-env {"FORCE_COLOR" "1"}))))
 
 (defn- launcher-command [argv]
   (into (vec (or *launcher-command* ["isaac"]))
         (vec (or argv []))))
 
-(defn- start-process! [argv]
+(defn- start-process! [argv stdout-tty]
   (let [command (launcher-command argv)]
     (if *spawn-process*
-      (*spawn-process* command)
-      (p/process command (spawn-options argv)))))
+      (*spawn-process* command (spawn-options argv stdout-tty))
+      (p/process command (spawn-options argv stdout-tty)))))
 
 (defn- channel-key [channel]
   (System/identityHashCode channel))
@@ -160,11 +161,11 @@
         stderr-f (stream-frames! stream-id (:err proc) "stderr")]
     (await-exit! stream-id proc stdout-f stderr-f)))
 
-(defn- start-stream! [channel argv send!]
+(defn- start-stream! [channel argv stdout-tty send!]
   (when-let [existing-stream-id (stream-id-for-channel channel)]
     (destroy-stream! existing-stream-id))
   (let [stream-id    (*stream-id-factory*)
-        proc         (start-process! argv)
+        proc         (start-process! argv stdout-tty)
         stdin-writer (PrintWriter. (:in proc) true)]
     (swap! streams assoc stream-id {:buffer       []
                                     :channel      channel
@@ -214,7 +215,7 @@
     (let [msg (json/parse-string line true)]
       (case (:type msg)
         "start"
-        (start-stream! channel (:argv msg) send!)
+        (start-stream! channel (:argv msg) (:stdout-tty msg) send!)
 
         "attach"
         (attach-stream! channel (:stream-id msg) send!)

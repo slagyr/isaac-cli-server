@@ -34,7 +34,7 @@
     (g/assoc! :cli-server-proc proc)
     proc))
 
-(defn- recording-process [command]
+(defn- recording-process [command _opts]
   (g/assoc! :cli-server-recorded-command command)
   (shell-process "exit 0"))
 
@@ -74,13 +74,13 @@
 
 (defn cli-server-handler-with-spawn-command [command]
   (install-handler!)
-  (g/assoc! :cli-server-spawn-factory (fn [_request]
+  (g/assoc! :cli-server-spawn-factory (fn [_request _opts]
                                         (shell-process command))))
 
 (defn cli-server-handler-with-spawn-command-and-grace-window [command grace-ms]
   (install-handler!)
   (g/assoc! :cli-server-grace-period-ms (Long/parseLong (str grace-ms)))
-  (g/assoc! :cli-server-spawn-factory (fn [_request]
+  (g/assoc! :cli-server-spawn-factory (fn [_request _opts]
                                         (shell-process command))))
 
 (defn cli-server-handler-with-recording-spawn-stub []
