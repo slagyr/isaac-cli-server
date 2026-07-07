@@ -9,6 +9,7 @@
     (java.util UUID)))
 
 (def ^:dynamic *spawn-process* nil)
+(def ^:dynamic *launcher-command* ["isaac"])
 (def ^:dynamic *stream-id-factory* #(str (UUID/randomUUID)))
 (def ^:dynamic *grace-period-ms* 2000)
 (def ^:dynamic *schedule-grace-timeout*
@@ -40,7 +41,8 @@
       root (assoc :dir root))))
 
 (defn- launcher-command [argv]
-  (into ["isaac"] (vec (or argv []))))
+  (into (vec (or *launcher-command* ["isaac"]))
+        (vec (or argv []))))
 
 (defn- start-process! [argv]
   (let [command (launcher-command argv)]

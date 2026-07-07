@@ -29,6 +29,23 @@
       (should= {:type "start-ack" :stream-id "stream-1"} (first @sent))
       (should= 0 (:code (last @sent)))))
 
+  (it "allows the launcher command to be overridden"
+    (let [sent    (atom [])
+          send!   (fn [frame] (swap! sent conj frame))
+          channel (Object.)
+          spawned (atom nil)]
+      (binding [sut/*stream-id-factory* (constantly "stream-1")
+                sut/*launcher-command*  ["/tmp/isaac-shim"]
+                sut/*spawn-process*     (fn [command]
+                                          (reset! spawned command)
+                                          (p/process ["sh" "-c" "exit 0"] {:in :pipe :out :pipe :err :pipe}))]
+        (sut/receive-line! channel
+                           (json/generate-string {:type "start" :argv ["sessions" "list"]})
+                           send!))
+      (helper/await-condition #(some (fn [frame] (= "exit" (:type frame))) @sent) 5000)
+      (should= ["/tmp/isaac-shim" "sessions" "list"] @spawned)
+      (should= 0 (:code (last @sent)))))
+
   (it "spawns from the explicit root when argv carries --root"
     (let [sent         (atom [])
           send!        (fn [frame] (swap! sent conj frame))
