@@ -7,6 +7,8 @@
     [gherclj.core :as g :refer [defgiven defwhen defthen helper!]]
     [isaac.cli-server.dispatch :as dispatch]
     [isaac.cli-server.ws :as ws]
+    [isaac.foundation.log-steps :as foundation-log]
+    [isaac.logger :as log]
     [isaac.spec-helper :as helper]
     [isaac.step-tables :as match]
     [org.httpkit.server :as httpkit]
@@ -38,7 +40,14 @@
   (g/assoc! :cli-server-recorded-command command)
   (shell-process "exit 0"))
 
+(defn- recording-process-with-exit-code [exit-code]
+  (fn [command]
+    (g/assoc! :cli-server-recorded-command command)
+    (shell-process (str "exit " exit-code))))
+
 (defn- reset-handler-state! []
+  (log/set-output! :memory)
+  (log/clear-entries!)
   (when-let [channel (g/get :cli-server-ws-channel)]
     (try
       (dispatch/disconnect! channel)
@@ -86,6 +95,10 @@
 (defn cli-server-handler-with-recording-spawn-stub []
   (install-handler!)
   (g/assoc! :cli-server-spawn-factory recording-process))
+
+(defn cli-server-handler-with-recording-spawn-stub-that-exits-with-code [exit-code]
+  (install-handler!)
+  (g/assoc! :cli-server-spawn-factory (recording-process-with-exit-code exit-code)))
 
 (defn- parse-argv [argv-text]
   (let [text (str/trim argv-text)]
@@ -177,11 +190,16 @@
 
 (g/after-scenario reset-handler-state!)
 
+(def cli-log-entries-match #'foundation-log/log-entries-match)
+(def cli-log-entries-dont-match #'foundation-log/log-entries-dont-match)
+
 (defgiven "the cli-server handler" isaac.cli-server.cli-server-steps/cli-server-handler)
 (defgiven #"^the cli-server handler with spawn command \"([^\"]+)\"$" isaac.cli-server.cli-server-steps/cli-server-handler-with-spawn-command)
 (defgiven #"^the cli-server handler with spawn command \"([^\"]+)\" and grace window (\d+) ms$"
   isaac.cli-server.cli-server-steps/cli-server-handler-with-spawn-command-and-grace-window)
 (defgiven "the cli-server handler with a recording spawn stub" isaac.cli-server.cli-server-steps/cli-server-handler-with-recording-spawn-stub)
+(defgiven #"^the cli-server handler with a recording spawn stub that exits with code (\d+)$"
+  isaac.cli-server.cli-server-steps/cli-server-handler-with-recording-spawn-stub-that-exits-with-code)
 
 (defwhen "a /cli client sends start with argv {argv:string}" isaac.cli-server.cli-server-steps/cli-client-sends-start)
 (defwhen "the /cli client sends stdin {text:string}" isaac.cli-server.cli-server-steps/cli-client-sends-stdin)
@@ -193,3 +211,5 @@
 (defthen "the recorded spawn command is the isaac launcher with args {argv:string}" isaac.cli-server.cli-server-steps/recorded-spawn-command-is)
 (defthen "the spawned subprocess is still running" isaac.cli-server.cli-server-steps/spawned-subprocess-running)
 (defthen "the spawned subprocess is no longer running" isaac.cli-server.cli-server-steps/spawned-subprocess-not-running)
+(defthen "the cli log has entries matching:" isaac.cli-server.cli-server-steps/cli-log-entries-match)
+(defthen "the cli log has no entries matching:" isaac.cli-server.cli-server-steps/cli-log-entries-dont-match)

@@ -3,6 +3,7 @@
     [babashka.process :as p]
     [cheshire.core :as json]
     [isaac.cli.args :as cli-args]
+    [isaac.logger :as log]
     [ring.util.codec :as codec])
   (:import
     (java.io BufferedReader InputStreamReader PrintWriter)
@@ -21,6 +22,7 @@
   (fn [token]
     (when (future? token)
       (future-cancel token))))
+(def ^:dynamic *now-ms* #(System/currentTimeMillis))
 
 (defonce ^:private streams (atom {}))
 (defonce ^:private channel->stream-id (atom {}))
@@ -65,7 +67,7 @@
 (defn- stream-state [stream-id]
   (get @streams stream-id))
 
-(declare buffer-frame!)
+(declare buffer-frame! log-command-finished!)
 
 (defn- send-live-frame! [stream-id frame]
   (when-let [send! (:send! (stream-state stream-id))]
@@ -85,25 +87,30 @@
     (*cancel-grace-timeout* task))
   (swap! streams update stream-id assoc :grace-task nil :grace-token nil))
 
-(defn- destroy-stream! [stream-id]
-  (when-let [{:keys [proc stdin-writer channel]} (stream-state stream-id)]
-    (try
-      (when stdin-writer
-        (.close ^PrintWriter stdin-writer))
-      (catch Exception _))
-    (try
-      (p/destroy proc)
-      (catch Exception _))
-    (when channel
-      (unbind-channel! channel))
-    (swap! streams dissoc stream-id)))
+(defn- destroy-stream!
+  ([stream-id]
+   (destroy-stream! stream-id nil))
+  ([stream-id reason]
+   (when reason
+     (log-command-finished! stream-id :reason reason))
+   (when-let [{:keys [proc stdin-writer channel]} (stream-state stream-id)]
+     (try
+       (when stdin-writer
+         (.close ^PrintWriter stdin-writer))
+       (catch Exception _))
+     (try
+       (p/destroy proc)
+       (catch Exception _))
+     (when channel
+       (unbind-channel! channel))
+     (swap! streams dissoc stream-id))))
 
 (defn- expire-grace! [stream-id token]
   (let [{:keys [grace-token send! exited?]} (stream-state stream-id)]
     (when (and (= token grace-token) (nil? send!))
       (if exited?
         (swap! streams dissoc stream-id)
-        (destroy-stream! stream-id)))))
+        (destroy-stream! stream-id :grace-window-expired)))))
 
 (defn- schedule-grace-expiry! [stream-id]
   (let [delay-ms (long (max 0 (or *grace-period-ms* 0)))
@@ -121,7 +128,9 @@
     (swap! streams update stream-id assoc :channel nil :send! nil :grace-task nil)
     (if exited?
       (swap! streams dissoc stream-id)
-      (schedule-grace-expiry! stream-id))))
+      (do
+        (swap! streams assoc-in [stream-id :abandoned?] true)
+        (schedule-grace-expiry! stream-id)))))
 
 (defn- route-frame! [stream-id frame]
   (if (attached? stream-id)
@@ -142,12 +151,14 @@
   (future
     (try
       (let [process    ^Process (:proc proc)
-            exit-frame (do
+            exit-code  (do
                          (.waitFor process)
                          @stdout-f
                          @stderr-f
-                         {:type "exit" :code (long (.exitValue process))})]
+                         (long (.exitValue process)))
+            exit-frame {:type "exit" :code exit-code}]
         (swap! streams assoc-in [stream-id :exited?] true)
+        (log-command-finished! stream-id :code exit-code)
         (route-frame! stream-id exit-frame)
         (when (attached? stream-id)
           (swap! streams dissoc stream-id)))
@@ -160,22 +171,49 @@
         stderr-f (stream-frames! stream-id (:err proc) "stderr")]
     (await-exit! stream-id proc stdout-f stderr-f)))
 
+(defn- now-ms []
+  (long (*now-ms*)))
+
+(defn- duration-ms [stream-id]
+  (let [{:keys [started-at-ms]} (stream-state stream-id)]
+    (max 0 (- (now-ms) (long (or started-at-ms (now-ms)))))))
+
+(defn- log-command-started! [stream-id argv]
+  (log/log* :info :cli/command-started *file* 0
+            :argv (vec (or argv []))
+            :stream-id stream-id))
+
+(defn- log-command-finished! [stream-id & kvs]
+  (when-let [{:keys [argv abandoned? finished-logged?]} (stream-state stream-id)]
+    (when-not finished-logged?
+      (swap! streams assoc-in [stream-id :finished-logged?] true)
+      (apply log/log* :info :cli/command-finished *file* 0
+             (concat [:argv        (vec (or argv []))
+                      :stream-id   stream-id
+                      :duration-ms (duration-ms stream-id)]
+                     kvs
+                     (when (and abandoned? (not (some #{:reason} kvs)))
+                       [:reason :abandoned-stream]))))))
+
 (defn- start-stream! [channel argv send!]
   (when-let [existing-stream-id (stream-id-for-channel channel)]
     (destroy-stream! existing-stream-id))
   (let [stream-id    (*stream-id-factory*)
         proc         (start-process! argv)
         stdin-writer (PrintWriter. (:in proc) true)]
-    (swap! streams assoc stream-id {:buffer       []
+    (swap! streams assoc stream-id {:argv          (vec (or argv []))
+                                    :buffer       []
                                     :channel      channel
                                     :exited?      false
                                     :grace-task   nil
                                     :grace-token  nil
                                     :proc         proc
                                     :send!        send!
+                                    :started-at-ms (now-ms)
                                     :stdin-writer stdin-writer
                                     :stream-id    stream-id})
     (bind-channel! channel stream-id)
+    (log-command-started! stream-id argv)
     (send-frame! send! {:type "start-ack" :stream-id stream-id})
     (start-streaming! stream-id proc)
     stream-id))
@@ -184,7 +222,7 @@
   (if-let [{:keys [buffer exited?]} (stream-state stream-id)]
     (do
       (clear-grace-token! stream-id)
-      (swap! streams update stream-id assoc :buffer [] :channel channel :send! send! :grace-task nil)
+      (swap! streams update stream-id assoc :abandoned? false :buffer [] :channel channel :send! send! :grace-task nil)
       (bind-channel! channel stream-id)
       (doseq [frame buffer]
         (send-frame! send! frame))

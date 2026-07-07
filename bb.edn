@@ -47,7 +47,9 @@
                         (println "Cleaned target/")
                         (apply gherclj/-main
                           (concat ["-f" "features"]
-                                  ["-s" "isaac.**-steps" "-t" "~slow" "-t" "~wip"]
+                                  ["-s" "isaac.**-steps"
+                                   "-s" "isaac.cli-server.feature-bootstrap"
+                                   "-t" "~slow" "-t" "~wip"]
                                   *command-line-args*)))}
 
   ci       {:doc  "Run all specs and features"

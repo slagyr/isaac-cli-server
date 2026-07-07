@@ -3,6 +3,7 @@
     [babashka.process :as p]
     [cheshire.core :as json]
     [isaac.cli-server.dispatch :as sut]
+    [isaac.logger :as log]
     [isaac.spec-helper :as helper]
     [speclj.core :refer :all]))
 
@@ -11,12 +12,13 @@
     (String. (.decode (java.util.Base64/getDecoder) data) "UTF-8")))
 
 (describe "dispatch"
+  (around [it] (log/capture-logs (it)))
 
   (it "spawns the isaac launcher with the client argv and emits a stream-id"
-    (let [sent     (atom [])
-          send!    (fn [frame] (swap! sent conj frame))
-          channel  (Object.)
-          spawned  (atom nil)]
+    (let [sent    (atom [])
+          send!   (fn [frame] (swap! sent conj frame))
+          channel (Object.)
+          spawned (atom nil)]
       (binding [sut/*stream-id-factory* (constantly "stream-1")
                 sut/*spawn-process*     (fn [command]
                                           (reset! spawned command)
@@ -105,4 +107,79 @@
                            #(swap! sent-2 conj %)))
       (helper/await-condition #(some (fn [frame] (= "exit" (:type frame))) @sent-2) 5000)
       (should= ["second\n"] (->> @sent-2 (filter #(= "stdout" (:type %))) (map decode-data) vec))
-      (should= 0 (:code (last @sent-2))))))
+      (should= 0 (:code (last @sent-2)))))
+
+  (it "logs command start and finish with argv, stream id, exit code, and duration"
+    (let [sent    (atom [])
+          send!   (fn [frame] (swap! sent conj frame))
+          channel (Object.)
+          spawned (atom nil)]
+      (binding [sut/*stream-id-factory* (constantly "stream-1")
+                sut/*spawn-process*     (fn [command]
+                                          (reset! spawned command)
+                                          (p/process ["sh" "-c" "exit 7"] {:in :pipe :out :pipe :err :pipe}))]
+        (sut/receive-line! channel
+                           (json/generate-string {:type "start" :argv ["sessions" "list"]})
+                           send!))
+      (helper/await-condition #(some (fn [frame] (= "exit" (:type frame))) @sent) 5000)
+      (let [started  (some #(when (= :cli/command-started (:event %)) %) @log/captured-logs)
+            finished (some #(when (= :cli/command-finished (:event %)) %) @log/captured-logs)]
+        (should= ["isaac" "sessions" "list"] @spawned)
+        (should-not-be-nil started)
+        (should-not-be-nil finished)
+        (should= ["sessions" "list"] (:argv started))
+        (should= "stream-1" (:stream-id started))
+        (should= "stream-1" (:stream-id finished))
+        (should= 7 (:code finished))
+        (should (integer? (:duration-ms finished)))
+        (should (<= 0 (:duration-ms finished))))))
+
+  (it "logs an exited detached stream as an abandoned finished command"
+    (let [channel (Object.)]
+      (binding [sut/*stream-id-factory* (constantly "stream-1")
+                sut/*grace-period-ms*   1000
+                sut/*spawn-process*     (fn [_]
+                                          (p/process ["sh" "-c" "exit 0"] {:in :pipe :out :pipe :err :pipe}))]
+        (sut/receive-line! channel
+                           (json/generate-string {:type "start" :argv ["sessions" "list"]})
+                           (fn [_]))
+        (sut/disconnect! channel))
+      (helper/await-condition #(some (fn [entry]
+                                       (and (= :cli/command-finished (:event entry))
+                                            (= :abandoned-stream (:reason entry))
+                                            (contains? entry :code)))
+                                     @log/captured-logs)
+                               5000)
+      (let [finished (some #(when (and (= :abandoned-stream (:reason %))
+                                       (contains? % :code))
+                              %)
+                           @log/captured-logs)]
+        (should-not-be-nil finished)
+        (should= "stream-1" (:stream-id finished))
+        (should= ["sessions" "list"] (:argv finished))
+        (should= 0 (:code finished)))))
+
+  (it "logs grace-window expiry as a finished command with a reason"
+    (let [channel (Object.)]
+      (binding [sut/*stream-id-factory*      (constantly "stream-1")
+                sut/*grace-period-ms*        1
+                sut/*schedule-grace-timeout* (fn [_ f] (future (f)))
+                sut/*cancel-grace-timeout*   (fn [_] nil)
+                sut/*spawn-process*          (fn [_]
+                                               (p/process ["sh" "-c" "sleep 60"] {:in :pipe :out :pipe :err :pipe}))]
+        (sut/receive-line! channel
+                           (json/generate-string {:type "start" :argv ["sessions" "list"]})
+                           (fn [_]))
+        (sut/disconnect! channel))
+      (helper/await-condition #(some (fn [entry]
+                                       (and (= :cli/command-finished (:event entry))
+                                            (= :grace-window-expired (:reason entry))))
+                                     @log/captured-logs)
+                               5000)
+      (let [finished (some #(when (= :grace-window-expired (:reason %)) %) @log/captured-logs)]
+        (should-not-be-nil finished)
+        (should= "stream-1" (:stream-id finished))
+        (should= ["sessions" "list"] (:argv finished))
+        (should-not (contains? finished :code))
+        (should (integer? (:duration-ms finished)))
+        (should (<= 0 (:duration-ms finished)))))))
