@@ -1,5 +1,5 @@
 {:id          :isaac.cli-server
- :version     "0.1.3"
+ :version     "0.1.4"
  :factory     isaac.module.protocol/module
  :description "Remote CLI server: a /cli WebSocket endpoint that runs isaac CLI commands server-side and pipes process IO back. Generalizes the ACP /acp route. See PROTOCOL.md."
 
