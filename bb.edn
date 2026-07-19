@@ -1,22 +1,24 @@
 {:paths ["src" "spec" "features"]
 
- ;; Babashka runs specs/features directly (no clojure subprocess). Git coords
- ;; match deps.edn — keep SHAs in sync when bumping foundation/server.
+ ;; Native babashka runners via isaac-foundation-test-support (isaac-x5ru / isaac-fq28).
+ ;; Keep the test-support :git/sha in sync with the foundation commit that
+ ;; ships bb.test-tasks under spec-support/src/bb/. Product pins below match
+ ;; the pre-xapx bb classpath (bump intentionally when ready).
  :deps  {io.github.slagyr/isaac-foundation              {:git/url "https://github.com/slagyr/isaac-foundation.git"
-                                                          :git/sha "305c337a69427cebbd2ae5471ac6684f0ae321a5"}
+                                                          :git/sha "43cf46e00087bf066a9e065ccc3d48dd2814ac23"}
          io.github.slagyr/isaac-foundation-spec         {:git/url "https://github.com/slagyr/isaac-foundation.git"
-                                                          :git/sha "305c337a69427cebbd2ae5471ac6684f0ae321a5"
+                                                          :git/sha "43cf46e00087bf066a9e065ccc3d48dd2814ac23"
                                                           :deps/root "spec"}
          io.github.slagyr/isaac-foundation-test-support {:git/url "https://github.com/slagyr/isaac-foundation.git"
-                                                            :git/sha "44e824c6eded90301ed1aba8ed3948c66725ee43"
-                                                            :deps/root "spec-support"}
+                                                          :git/sha "43cf46e00087bf066a9e065ccc3d48dd2814ac23"
+                                                          :deps/root "spec-support"}
          io.github.slagyr/isaac-server                  {:git/url "https://github.com/slagyr/isaac-server.git"
                                                           :git/sha "2fb78f44a2dfed5159713089b506eb9d3ee587da"}
          marigold.bridge/marigold.bridge                {:git/url "https://github.com/slagyr/isaac-foundation.git"
-                                                          :git/sha "305c337a69427cebbd2ae5471ac6684f0ae321a5"
+                                                          :git/sha "43cf46e00087bf066a9e065ccc3d48dd2814ac23"
                                                           :deps/root "modules/marigold.bridge"}
          marigold.longwave/marigold.longwave            {:git/url "https://github.com/slagyr/isaac-foundation.git"
-                                                          :git/sha "305c337a69427cebbd2ae5471ac6684f0ae321a5"
+                                                          :git/sha "43cf46e00087bf066a9e065ccc3d48dd2814ac23"
                                                           :deps/root "modules/marigold.longwave"}
          clout/clout                                    {:mvn/version "1.1.0"}
          com.cleancoders.c3kit/apron                    {:mvn/version "3.0.0"}
@@ -34,33 +36,45 @@
                       :requires ([isaac.foundation.config-bypass-lint :as lint])
                       :task (apply lint/lint! (or (seq *command-line-args*) ["src"]))}
 
-  spec     {:doc  "Run cli-server unit specs (pass file/dir to narrow)"
-            :requires ([speclj.main :as speclj])
-            :task     (if (seq *command-line-args*)
-                        (apply speclj/-main "-c" "-D" "spec" *command-line-args*)
-                        (speclj/-main "-c" "-D" "spec"))}
+  spec {:doc  "Run cli-server unit specs natively (pass file/dir to narrow)"
+        :requires ([babashka.process :as process])
+        :task (let [args (vec *command-line-args*)
+                    cmd  (into ["bb" "-e"
+                                "(require '[bb.test-tasks :as t]) (apply t/run-spec! *command-line-args*)"
+                                "--"]
+                               args)
+                    {:keys [exit]} (apply process/shell cmd)]
+                (when (pos? exit) (System/exit exit)))}
 
-  features {:doc  "Run cli-server features (excludes @slow and @wip)"
-            :requires ([gherclj.main :as gherclj])
-            :task     (do
-                        (babashka.fs/delete-tree "target")
-                        (println "Cleaned target/")
-                        (apply gherclj/-main
-                          (concat ["-f" "features"]
-                                  ["-s" "isaac.**-steps"
-                                   "-s" "isaac.cli-server.feature-bootstrap"
-                                   "-t" "~slow" "-t" "~wip"]
-                                  *command-line-args*)))}
+  jvm-spec {:doc  "Run speclj via clojure -M:spec (JVM fallback)"
+            :requires ([bb.test-tasks :as tests])
+            :task (binding [tests/*jvm-spec-cmd* ["clojure" "-M:spec"]]
+                    (apply tests/run-jvm-spec! *command-line-args*))}
 
-  ci       {:doc  "Run all specs and features"
-            :task     (do
-                        (run 'config-bypass-lint)
-                        (let [spec-result (if (seq *command-line-args*)
-                                            (apply shell "bb" "spec" *command-line-args*)
-                                            (shell "bb" "spec"))
-                              feat-result (shell "bb" "features")]
-                          (when (pos? (:exit spec-result)) (System/exit (:exit spec-result)))
-                          (when (pos? (:exit feat-result)) (System/exit (:exit feat-result)))))}
+  features {:doc  "Run cli-server features natively (excludes @slow and @wip)"
+            :requires ([babashka.process :as process])
+            :task (let [args (vec *command-line-args*)
+                        expr (str "(require '[bb.test-tasks :as t]) "
+                                  "(binding [t/*step-globs* "
+                                  "[\"isaac.**-steps\" \"isaac.cli-server.feature-bootstrap\"]] "
+                                  "(apply t/run-features! *command-line-args*))")
+                        cmd  (into ["bb" "-e" expr "--"] args)
+                        {:keys [exit]} (apply process/shell cmd)]
+                    (when (pos? exit) (System/exit exit)))}
 
-  clean    {:doc  "Remove the target/ build dir"
-            :task (babashka.fs/delete-tree "target")}}}
+  jvm-features {:doc  "Run gherclj via clojure -M:features (JVM fallback)"
+                :requires ([bb.test-tasks :as tests])
+                :task (binding [tests/*jvm-features-cmd* ["clojure" "-M:features"]]
+                        (apply tests/run-jvm-features! *command-line-args*))}
+
+  ci {:doc  "Native specs + features"
+      :requires ([babashka.process :as process])
+      :task (do (run 'config-bypass-lint)
+                (doseq [t ["spec" "features"]]
+                  (let [{:keys [exit]} (if (and (= t "spec") (seq *command-line-args*))
+                                         (apply process/shell "bb" t *command-line-args*)
+                                         (process/shell "bb" t))]
+                    (when (pos? exit) (System/exit exit)))))}
+
+  clean {:doc  "Remove the target/ build dir"
+         :task (babashka.fs/delete-tree "target")}}}
