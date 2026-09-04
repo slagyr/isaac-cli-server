@@ -8,7 +8,7 @@
  ;; Tests run via `bb spec` / `bb features` (see bb.edn). JVM aliases below
  ;; are optional escape hatches sharing the :test classpath.
  :deps  {io.github.slagyr/isaac-foundation {:git/url "https://github.com/slagyr/isaac-foundation.git"
-                                            :git/sha "305c337a69427cebbd2ae5471ac6684f0ae321a5"}
+                                            :git/sha "e0dc789b58723a3415a12d5f0d95e0d9148bc316"}
          io.github.slagyr/isaac-server     {:git/url "https://github.com/slagyr/isaac-server.git"
                                             :git/sha "2fb78f44a2dfed5159713089b506eb9d3ee587da"}
          clout/clout                       {:mvn/version "1.1.0"}
@@ -29,10 +29,10 @@
 
   :test      {:extra-paths ["spec" "features"]
               :extra-deps  {io.github.slagyr/isaac-foundation-spec         {:git/url "https://github.com/slagyr/isaac-foundation.git"
-                                                                          :git/sha "305c337a69427cebbd2ae5471ac6684f0ae321a5"
+                                                                          :git/sha "e0dc789b58723a3415a12d5f0d95e0d9148bc316"
                                                                           :deps/root "spec"}
                             io.github.slagyr/isaac-foundation-test-support {:git/url "https://github.com/slagyr/isaac-foundation.git"
-                                                                              :git/sha "305c337a69427cebbd2ae5471ac6684f0ae321a5"
+                                                                              :git/sha "e0dc789b58723a3415a12d5f0d95e0d9148bc316"
                                                                               :deps/root "spec-support"}
                             io.github.slagyr/isaac-server-test-support     {:git/url "https://github.com/slagyr/isaac-server.git"
                                                                               :git/sha "2fb78f44a2dfed5159713089b506eb9d3ee587da"

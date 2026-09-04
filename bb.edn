@@ -5,20 +5,20 @@
  ;; ships bb.test-tasks under spec-support/src/bb/. Product pins below match
  ;; the pre-xapx bb classpath (bump intentionally when ready).
  :deps  {io.github.slagyr/isaac-foundation              {:git/url "https://github.com/slagyr/isaac-foundation.git"
-                                                          :git/sha "43cf46e00087bf066a9e065ccc3d48dd2814ac23"}
+                                                          :git/sha "e0dc789b58723a3415a12d5f0d95e0d9148bc316"}
          io.github.slagyr/isaac-foundation-spec         {:git/url "https://github.com/slagyr/isaac-foundation.git"
-                                                          :git/sha "43cf46e00087bf066a9e065ccc3d48dd2814ac23"
+                                                          :git/sha "e0dc789b58723a3415a12d5f0d95e0d9148bc316"
                                                           :deps/root "spec"}
          io.github.slagyr/isaac-foundation-test-support {:git/url "https://github.com/slagyr/isaac-foundation.git"
-                                                          :git/sha "43cf46e00087bf066a9e065ccc3d48dd2814ac23"
+                                                          :git/sha "e0dc789b58723a3415a12d5f0d95e0d9148bc316"
                                                           :deps/root "spec-support"}
          io.github.slagyr/isaac-server                  {:git/url "https://github.com/slagyr/isaac-server.git"
                                                           :git/sha "2fb78f44a2dfed5159713089b506eb9d3ee587da"}
          marigold.bridge/marigold.bridge                {:git/url "https://github.com/slagyr/isaac-foundation.git"
-                                                          :git/sha "43cf46e00087bf066a9e065ccc3d48dd2814ac23"
+                                                          :git/sha "e0dc789b58723a3415a12d5f0d95e0d9148bc316"
                                                           :deps/root "modules/marigold.bridge"}
          marigold.longwave/marigold.longwave            {:git/url "https://github.com/slagyr/isaac-foundation.git"
-                                                          :git/sha "43cf46e00087bf066a9e065ccc3d48dd2814ac23"
+                                                          :git/sha "e0dc789b58723a3415a12d5f0d95e0d9148bc316"
                                                           :deps/root "modules/marigold.longwave"}
          clout/clout                                    {:mvn/version "1.1.0"}
          com.cleancoders.c3kit/apron                    {:mvn/version "3.0.0"}
