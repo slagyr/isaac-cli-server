@@ -1,10 +1,12 @@
 name: CI Tests
 
+# CI runs on main only (Micah, 2026-09-10): workers checkpoint on bean
+# branches and verify lands them on main; a red side-branch checkpoint must
+# never look like a main regression. Fix branches rely on the local bb ci gate.
 on:
   push:
     branches:
       - main
-  pull_request:
   workflow_dispatch:
 
 permissions:
