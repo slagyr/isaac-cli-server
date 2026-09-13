@@ -13,12 +13,12 @@
                                                           :git/sha "e0dc789b58723a3415a12d5f0d95e0d9148bc316"
                                                           :deps/root "spec-support"}
          io.github.slagyr/isaac-http                  {:git/url "https://github.com/slagyr/isaac-http.git"
-                                                          :git/sha "8623cf1d521c59ea0ffc175ae6f4113d870bef37"}
+                                                          :git/sha "11e43014ad5c7b9c8bb693e0eb4f673bbd23991d"}
          marigold.bridge/marigold.bridge                {:git/url "https://github.com/slagyr/isaac-foundation.git"
-                                                          :git/sha "8623cf1d521c59ea0ffc175ae6f4113d870bef37"
+                                                          :git/sha "e0dc789b58723a3415a12d5f0d95e0d9148bc316"
                                                           :deps/root "modules/marigold.bridge"}
          marigold.longwave/marigold.longwave            {:git/url "https://github.com/slagyr/isaac-foundation.git"
-                                                          :git/sha "8623cf1d521c59ea0ffc175ae6f4113d870bef37"
+                                                          :git/sha "e0dc789b58723a3415a12d5f0d95e0d9148bc316"
                                                           :deps/root "modules/marigold.longwave"}
          clout/clout                                    {:mvn/version "1.1.0"}
          com.cleancoders.c3kit/apron                    {:mvn/version "3.0.0"}
@@ -29,7 +29,7 @@
          org.babashka/http-client                       {:mvn/version "0.4.22"}
          babashka/process                               {:mvn/version "0.5.22"}
          speclj/speclj                                  {:mvn/version "3.13.0"}
-         io.github.slagyr/gherclj                       {:git/tag "v1.3.0" :git/sha "8623cf1d521c59ea0ffc175ae6f4113d870bef37"}}
+         io.github.slagyr/gherclj                       {:git/tag "v1.3.0" :git/sha "9c3bb1d"}}
 
  :tasks
  {config-bypass-lint {:doc "Fail on raw config slurp/read outside isaac.config.* (isaac-foundation-test-support)"
