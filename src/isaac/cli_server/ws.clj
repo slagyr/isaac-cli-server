@@ -3,7 +3,7 @@
 
    Generalizes isaac.comm.acp.websocket/handler: upgrade the socket, then run
    the main isaac CLI dispatch with the client's handshake argv and frame the
-   process IO back. HTTP auth is enforced by isaac-server before this handler.
+   process IO back. HTTP auth is enforced by isaac-http before this handler.
 
    See PROTOCOL.md for the wire contract."
   (:require

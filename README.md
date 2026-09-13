@@ -28,7 +28,7 @@ bb ci         # Run both
 ```
 
 Depends on [isaac-foundation](https://github.com/slagyr/isaac-foundation) and
-[isaac-server](https://github.com/slagyr/isaac-server).
+[isaac-http](https://github.com/slagyr/isaac-http).
 
 ## License
 

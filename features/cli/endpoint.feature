@@ -1,6 +1,6 @@
 Feature: /cli WebSocket endpoint
   Handler-level tests for isaac.cli-server.ws/handler. Auth is enforced by
-  isaac-server before the handler runs; not asserted here.
+  isaac-http before the handler runs; not asserted here.
 
   Scenario: a batch command streams stdout and exits zero
     Given the cli-server handler with spawn command "echo isaac"
