@@ -2,11 +2,13 @@
   (:require
     [babashka.process :as p]
     [cheshire.core :as json]
+    [clojure.string :as str]
     [isaac.cli.args :as cli-args]
     [isaac.cli.host :as host]
     [isaac.cli.registry :as registry]
     [isaac.logger :as log]
     [isaac.nexus :as nexus]
+    [isaac.startup.classpath-cache :as classpath-cache]
     [ring.util.codec :as codec])
   (:import
     (java.io BufferedReader InputStreamReader PipedInputStream PipedOutputStream PrintWriter)
@@ -27,6 +29,12 @@
     (when (future? token)
       (future-cancel token))))
 (def ^:dynamic *now-ms* #(System/currentTimeMillis))
+(def ^:dynamic *basis-current?*
+  (fn []
+    (let [config (some-> (nexus/get :config) deref)
+          loaded (nexus/get :module-basis)]
+      (or (nil? loaded)
+          (= loaded (classpath-cache/identity-basis config))))))
 
 (defonce ^:private streams (atom {}))
 (defonce ^:private channel->stream-id (atom {}))
@@ -64,6 +72,22 @@
 (defn- hosted-command? [argv]
   (boolean (:hosted (command-for argv))))
 
+(defn- first-subcommand [argv]
+  (let [{:keys [args]} (cli-args/extract-root-flag (vec (or argv [])))]
+    (first (remove #(str/starts-with? % "-") (rest args)))))
+
+(defn- read-only-command? [argv command]
+  (let [hint (:read-only command)]
+    (or (true? hint)
+        (and (set? hint) (contains? hint (first-subcommand argv))))))
+
+(defn- stale-refusal [argv]
+  (when (and (not (*basis-current?*))
+             (not (read-only-command? argv (command-for argv))))
+    (log/warn :cli/refused-stale-basis :argv (vec argv))
+    {:stderr "server restart pending — restart the server, or run with --local\n"
+     :code 75}))
+
 (declare route-frame!)
 
 (defn- line-writer [stream-id type]
@@ -82,7 +106,9 @@
     (close [] nil)))
 
 (defn- start-hosted! [stream-id argv stdout-tty]
-  (let [input-writer (PipedOutputStream.)
+  (if-let [{:keys [stderr code]} (stale-refusal argv)]
+    {:refusal {:stderr stderr :code code}}
+    (let [input-writer (PipedOutputStream.)
         input-reader (PipedInputStream. input-writer)
         cli-host     (host/embedded-host {:in (InputStreamReader. input-reader)
                                           :out (line-writer stream-id "stdout")
@@ -93,9 +119,9 @@
         task         (future
                        (host/run-embedded* cli-host {:argv argv
                                                     :root (or *server-root* (nexus/get :root))}))]
-    {:host cli-host
-     :stdin-writer (PrintWriter. input-writer true)
-     :task task}))
+      {:host cli-host
+       :stdin-writer (PrintWriter. input-writer true)
+       :task task})))
 
 (defn- channel-key [channel]
   (System/identityHashCode channel))
@@ -292,9 +318,13 @@
     (bind-channel! channel stream-id)
     (log-command-started! stream-id argv)
     (send-frame! send! {:type "start-ack" :stream-id stream-id})
-    (if hosted?
-      (await-task! stream-id (:task execution) (:host execution) runtime)
-      (start-streaming! stream-id (:proc execution)))
+    (if-let [{:keys [stderr code]} (:refusal execution)]
+      (do
+        (route-frame! stream-id {:type "stderr" :data (b64-encode stderr)})
+        (finish-task! stream-id code))
+      (if hosted?
+        (await-task! stream-id (:task execution) (:host execution) runtime)
+        (start-streaming! stream-id (:proc execution))))
     stream-id))
 
 (defn- attach-stream! [channel stream-id send!]

@@ -63,6 +63,7 @@
     (try
       (dispatch/disconnect! channel)
       (catch Exception _)))
+  (g/assoc! :cli-server-basis-current? true)
   (g/assoc! :cli-server-channel-opts nil)
   (g/assoc! :cli-server-grace-period-ms nil)
   (g/assoc! :cli-server-grace-tasks {})
@@ -126,6 +127,10 @@
                                    0)})
     (registry/register! {:name "fx-print" :hosted true
                          :run-fn (fn [{:keys [_raw-args]}] (println (str/join " " _raw-args)) 0)})
+    (registry/register! {:name "fx-read" :hosted true :read-only true
+                         :run-fn (fn [_] (println "read ok") 0)})
+    (registry/register! {:name "fx-multi" :hosted true :read-only #{"list"}
+                         :run-fn (constantly 0)})
     (registry/register! {:name "fx-exit" :hosted true
                          :run-fn (fn [{:keys [_raw-args]}] (host/exit! (parse-long (first _raw-args))))})
     (registry/register! {:name "fx-throw" :hosted true
@@ -170,8 +175,12 @@
     (binding [dispatch/*grace-period-ms*      (or (g/get :cli-server-grace-period-ms) dispatch/*grace-period-ms*)
               dispatch/*schedule-grace-timeout* schedule-grace-timeout!
               dispatch/*cancel-grace-timeout* cancel-grace-timeout!
-              dispatch/*spawn-process*        (g/get :cli-server-spawn-factory)]
+              dispatch/*spawn-process*        (g/get :cli-server-spawn-factory)
+              dispatch/*basis-current?*        #(not (false? (g/get :cli-server-basis-current?)))]
       (on-receive (g/get :cli-server-ws-channel) line))))
+
+(defn server-basis-behind []
+  (g/assoc! :cli-server-basis-current? false))
 
 (defn cli-client-sends-start [argv-text]
   (when-not (g/get :cli-server-channel-opts)
@@ -194,7 +203,8 @@
     (binding [dispatch/*grace-period-ms*      (or (g/get :cli-server-grace-period-ms) dispatch/*grace-period-ms*)
               dispatch/*schedule-grace-timeout* schedule-grace-timeout!
               dispatch/*cancel-grace-timeout* cancel-grace-timeout!
-              dispatch/*spawn-process*        (g/get :cli-server-spawn-factory)]
+              dispatch/*spawn-process*        (g/get :cli-server-spawn-factory)
+              dispatch/*basis-current?*        #(not (false? (g/get :cli-server-basis-current?)))]
       (on-receive (g/get :cli-server-ws-channel)
                   (json/generate-string {:type "attach" :stream-id stream-id})))))
 
@@ -291,6 +301,7 @@
 (defgiven #"^the cli-server handler with the fixture commands registered and grace window (\d+) ms$"
   isaac.cli-server.cli-server-steps/cli-server-handler-with-fixture-commands-and-grace)
 (defgiven "the server process state is snapshotted" isaac.cli-server.cli-server-steps/process-state-snapshotted)
+(defgiven "the server's loaded module basis is behind the on-disk basis" isaac.cli-server.cli-server-steps/server-basis-behind)
 (defgiven #"^the cli-server handler with a recording spawn stub that exits with code (\d+)$"
   isaac.cli-server.cli-server-steps/cli-server-handler-with-recording-spawn-stub-that-exits-with-code)
 

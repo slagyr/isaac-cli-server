@@ -16,6 +16,39 @@
 (describe "dispatch"
   (around [it] (log/capture-logs (it)))
 
+  (it "refuses a mutating hosted command when the loaded basis is stale"
+    (let [sent    (atom [])
+          channel (Object.)]
+      (registry/register! {:name "mutate" :hosted true :run-fn (constantly 0)})
+      (nexus/-with-nexus {:root "/srv/isaac"}
+        (binding [sut/*basis-current?*    (constantly false)
+                  sut/*stream-id-factory* (constantly "stale-mutate")]
+          (sut/receive-line! channel
+                             (json/generate-string {:type "start" :argv ["mutate"]})
+                             #(swap! sent conj %))))
+      (helper/await-condition #(some (fn [frame] (= "exit" (:type frame))) @sent) 5000)
+      (should-contain "restart pending" (->> @sent (filter #(= "stderr" (:type %))) first decode-data))
+      (should= 75 (:code (last @sent)))
+      (should= :cli/refused-stale-basis (:event (first @log/captured-logs)))))
+
+  (it "runs a read-only hosted command when the loaded basis is stale"
+    (let [sent    (atom [])
+          channel (Object.)]
+      (registry/register! {:name "read" :hosted true :read-only true
+                           :run-fn (fn [_] (println "read ok") 0)})
+      (nexus/-with-nexus {:root "/srv/isaac"}
+        (binding [sut/*basis-current?*    (constantly false)
+                  sut/*stream-id-factory* (constantly "stale-read")]
+          (sut/receive-line! channel
+                             (json/generate-string {:type "start" :argv ["read"]})
+                             #(swap! sent conj %))))
+      (helper/await-condition #(some (fn [frame] (= "exit" (:type frame))) @sent) 5000)
+      (should= 0 (:code (last @sent)))))
+
+  (it "applies read-only sets to the first subcommand"
+    (should (#'sut/read-only-command? ["multi" "--quiet" "list"] {:read-only #{"list"}}))
+    (should-not (#'sut/read-only-command? ["multi" "set"] {:read-only #{"list"}})))
+
   (it "runs hosted commands on an embedded task without spawning a process"
     (let [sent     (atom [])
           channel  (Object.)
