@@ -1,7 +1,14 @@
 {:id          :isaac.cli-server
- :version     "0.1.4"
+ :version     "0.2.0"
  :factory     isaac.module.protocol/module
- :description "Remote CLI server: a /cli WebSocket endpoint that runs isaac CLI commands server-side and pipes process IO back. Generalizes the ACP /acp route. See PROTOCOL.md."
+ :description "Remote CLI server: a /cli WebSocket endpoint that runs hosted commands in-process and pipes command IO back. See PROTOCOL.md."
+
+ :isaac.config/schema
+ {:cli-server
+  {:schema {:type :map
+            :description "Remote CLI execution settings"
+            :schema {:timeout-ms {:type :int
+                                  :description "Wall-clock timeout for hosted commands; omit for no timeout"}}}}}
 
  ;; HTTP route contributed via the :isaac.http/route berth, exactly like /acp.
  ;; The handler authenticates at the upgrade, then runs the main CLI dispatch

@@ -5,10 +5,14 @@
     [clojure.edn :as edn]
     [clojure.string :as str]
     [gherclj.core :as g :refer [defgiven defwhen defthen helper!]]
+    [isaac.cli.host :as host]
+    [isaac.cli.registry :as registry]
     [isaac.cli-server.dispatch :as dispatch]
     [isaac.cli-server.ws :as ws]
     [isaac.foundation.log-steps :as foundation-log]
+    [isaac.config.api :as config]
     [isaac.logger :as log]
+    [isaac.nexus :as nexus]
     [isaac.spec-helper :as helper]
     [isaac.step-tables :as match]
     [org.httpkit.server :as httpkit]
@@ -26,7 +30,13 @@
 
 (defn- frames-for-matching []
   (->> @(g/get :cli-server-sent-frames)
-       (mapv decode-frame-data)))
+       (map decode-frame-data)
+       (partition-by :type)
+       (mapcat (fn [frames]
+                 (if (contains? #{"stdout" "stderr"} (:type (first frames)))
+                   [(assoc (first frames) :data (apply str (map :data frames)))]
+                   frames)))
+       vec))
 
 (defn- process-options []
   {:in :pipe :out :pipe :err :pipe})
@@ -37,6 +47,7 @@
     proc))
 
 (defn- recording-process [command _opts]
+  (g/update! :cli-server-spawn-count (fnil inc 0))
   (g/assoc! :cli-server-recorded-command command)
   (shell-process "exit 0"))
 
@@ -55,12 +66,16 @@
   (g/assoc! :cli-server-channel-opts nil)
   (g/assoc! :cli-server-grace-period-ms nil)
   (g/assoc! :cli-server-grace-tasks {})
+  (g/assoc! :cli-server-disconnected? false)
   (g/assoc! :cli-server-proc nil)
   (g/assoc! :cli-server-recorded-command nil)
+  (g/assoc! :cli-server-spawn-count 0)
+  (g/assoc! :cli-server-shutdown-ran? (atom false))
   (g/assoc! :cli-server-sent-frames (atom []))
   (g/assoc! :cli-server-spawn-factory nil)
   (g/assoc! :cli-server-ws-channel (Object.))
   (alter-var-root #'dispatch/*spawn-process* (constantly nil))
+  (alter-var-root #'dispatch/*server-root* (constantly "/srv/isaac"))
   (alter-var-root #'ws/*frame-sender* (constantly nil)))
 
 (defn- invoke-handler! []
@@ -100,6 +115,39 @@
   (install-handler!)
   (g/assoc! :cli-server-spawn-factory (recording-process-with-exit-code exit-code)))
 
+(defn- register-fixture-commands! []
+  (let [shutdown-ran? (g/get :cli-server-shutdown-ran?)]
+    (registry/register! {:name "fx-echo" :hosted true
+                         :run-fn (fn [_]
+                                   (loop []
+                                     (when-let [line (read-line)]
+                                       (println line)
+                                       (recur)))
+                                   0)})
+    (registry/register! {:name "fx-print" :hosted true
+                         :run-fn (fn [{:keys [_raw-args]}] (println (str/join " " _raw-args)) 0)})
+    (registry/register! {:name "fx-exit" :hosted true
+                         :run-fn (fn [{:keys [_raw-args]}] (host/exit! (parse-long (first _raw-args))))})
+    (registry/register! {:name "fx-throw" :hosted true
+                         :run-fn (fn [{:keys [_raw-args]}] (throw (ex-info (first _raw-args) {})))})
+    (registry/register! {:name "fx-block" :hosted true
+                         :run-fn (fn [_]
+                                   (host/on-shutdown! #(reset! shutdown-ran? true))
+                                   (host/block-until-cancelled!)
+                                   0)})
+    (registry/register! {:name "fx-local" :hosted true :local-only true :run-fn (constantly 0)})
+    (registry/register! {:name "fx-legacy" :run-fn (constantly 0)})))
+
+(defn cli-server-handler-with-fixture-commands []
+  (install-handler!)
+  (nexus/init! {:root "/srv/isaac"})
+  (register-fixture-commands!)
+  (g/assoc! :cli-server-spawn-factory recording-process))
+
+(defn cli-server-handler-with-fixture-commands-and-grace [grace-ms]
+  (cli-server-handler-with-fixture-commands)
+  (g/assoc! :cli-server-grace-period-ms (Long/parseLong (str grace-ms))))
+
 (defn- parse-argv [argv-text]
   (let [text (str/trim argv-text)]
     (cond
@@ -131,15 +179,29 @@
   (send-client-line! (json/generate-string {:type "start" :argv (parse-argv argv-text)})))
 
 (defn cli-client-sends-stdin [text]
-  (send-client-line! (json/generate-string {:type "stdin"
-                                            :data (codec/base64-encode (.getBytes text))})))
+  (if (g/get :cli-server-disconnected?)
+    (dispatch/-send-stdin! (:stream-id (first @(g/get :cli-server-sent-frames))) text)
+    (send-client-line! (json/generate-string {:type "stdin"
+                                              :data (codec/base64-encode (.getBytes text))}))))
 
 (defn cli-client-sends-stdin-close []
   (send-client-line! (json/generate-string {:type "stdin-close"})))
 
+(defn cli-client-attaches-to-issued-stream []
+  (let [stream-id (:stream-id (first @(g/get :cli-server-sent-frames)))
+        on-receive (:on-receive (g/get :cli-server-channel-opts))]
+    (g/assoc! :cli-server-ws-channel (Object.))
+    (binding [dispatch/*grace-period-ms*      (or (g/get :cli-server-grace-period-ms) dispatch/*grace-period-ms*)
+              dispatch/*schedule-grace-timeout* schedule-grace-timeout!
+              dispatch/*cancel-grace-timeout* cancel-grace-timeout!
+              dispatch/*spawn-process*        (g/get :cli-server-spawn-factory)]
+      (on-receive (g/get :cli-server-ws-channel)
+                  (json/generate-string {:type "attach" :stream-id stream-id})))))
+
 (defn cli-client-disconnects []
   (let [on-close (:on-close (g/get :cli-server-channel-opts))]
     (g/should (fn? on-close))
+    (g/assoc! :cli-server-disconnected? true)
     (binding [dispatch/*grace-period-ms*      (or (g/get :cli-server-grace-period-ms) dispatch/*grace-period-ms*)
               dispatch/*schedule-grace-timeout* schedule-grace-timeout!
               dispatch/*cancel-grace-timeout* cancel-grace-timeout!]
@@ -182,6 +244,33 @@
       (g/update! :cli-server-grace-tasks dissoc token)
       (task))))
 
+(defn no-subprocess-spawned []
+  (g/should= 0 (g/get :cli-server-spawn-count)))
+
+(defn hosted-command-running []
+  (g/should (dispatch/task-running?)))
+
+(defn hosted-command-not-running []
+  (helper/await-condition #(not (dispatch/task-running?)) 5000)
+  (g/should-not (dispatch/task-running?)))
+
+(defn hosted-shutdown-ran []
+  (g/should @(g/get :cli-server-shutdown-ran?)))
+
+(defn process-state-snapshotted []
+  (g/assoc! :cli-server-process-state
+            {:config   (config/process-memo-snapshot)
+             :logger   (dissoc (log/snapshot) :entries)
+             :nexus    (nexus/necho)
+             :registry (registry/snapshot)}))
+
+(defn process-state-unchanged []
+  (g/should= (g/get :cli-server-process-state)
+             {:config   (config/process-memo-snapshot)
+              :logger   (dissoc (log/snapshot) :entries)
+              :nexus    (nexus/necho)
+              :registry (registry/snapshot)}))
+
 (defn spawned-subprocess-not-running []
   (helper/await-condition #(let [proc (g/get :cli-server-proc)]
                               (and proc (not (.isAlive (:proc proc))))) 5000)
@@ -198,6 +287,10 @@
 (defgiven #"^the cli-server handler with spawn command \"([^\"]+)\" and grace window (\d+) ms$"
   isaac.cli-server.cli-server-steps/cli-server-handler-with-spawn-command-and-grace-window)
 (defgiven "the cli-server handler with a recording spawn stub" isaac.cli-server.cli-server-steps/cli-server-handler-with-recording-spawn-stub)
+(defgiven "the cli-server handler with the fixture commands registered" isaac.cli-server.cli-server-steps/cli-server-handler-with-fixture-commands)
+(defgiven #"^the cli-server handler with the fixture commands registered and grace window (\d+) ms$"
+  isaac.cli-server.cli-server-steps/cli-server-handler-with-fixture-commands-and-grace)
+(defgiven "the server process state is snapshotted" isaac.cli-server.cli-server-steps/process-state-snapshotted)
 (defgiven #"^the cli-server handler with a recording spawn stub that exits with code (\d+)$"
   isaac.cli-server.cli-server-steps/cli-server-handler-with-recording-spawn-stub-that-exits-with-code)
 
@@ -205,11 +298,17 @@
 (defwhen "the /cli client sends stdin {text:string}" isaac.cli-server.cli-server-steps/cli-client-sends-stdin)
 (defwhen "the /cli client sends stdin-close" isaac.cli-server.cli-server-steps/cli-client-sends-stdin-close)
 (defwhen "the /cli client disconnects" isaac.cli-server.cli-server-steps/cli-client-disconnects)
+(defwhen "a /cli client sends attach with the issued stream-id" isaac.cli-server.cli-server-steps/cli-client-attaches-to-issued-stream)
 (defwhen "the grace window elapses" isaac.cli-server.cli-server-steps/grace-window-elapses)
 
 (defthen "the handler sends frames:" isaac.cli-server.cli-server-steps/handler-sends-frames)
 (defthen "the recorded spawn command is the isaac launcher with args {argv:string}" isaac.cli-server.cli-server-steps/recorded-spawn-command-is)
 (defthen "the spawned subprocess is still running" isaac.cli-server.cli-server-steps/spawned-subprocess-running)
 (defthen "the spawned subprocess is no longer running" isaac.cli-server.cli-server-steps/spawned-subprocess-not-running)
+(defthen "no subprocess was spawned" isaac.cli-server.cli-server-steps/no-subprocess-spawned)
+(defthen "the hosted command is still running" isaac.cli-server.cli-server-steps/hosted-command-running)
+(defthen "the hosted command is no longer running" isaac.cli-server.cli-server-steps/hosted-command-not-running)
+(defthen "the hosted command's shutdown fn ran" isaac.cli-server.cli-server-steps/hosted-shutdown-ran)
+(defthen "the server process state is unchanged" isaac.cli-server.cli-server-steps/process-state-unchanged)
 (defthen "the cli log has entries matching:" isaac.cli-server.cli-server-steps/cli-log-entries-match)
 (defthen "the cli log has no entries matching:" isaac.cli-server.cli-server-steps/cli-log-entries-dont-match)

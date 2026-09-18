@@ -3,7 +3,9 @@
     [babashka.process :as p]
     [cheshire.core :as json]
     [isaac.cli-server.dispatch :as sut]
+    [isaac.cli.registry :as registry]
     [isaac.logger :as log]
+    [isaac.nexus :as nexus]
     [isaac.spec-helper :as helper]
     [speclj.core :refer :all]))
 
@@ -13,6 +15,48 @@
 
 (describe "dispatch"
   (around [it] (log/capture-logs (it)))
+
+  (it "runs hosted commands on an embedded task without spawning a process"
+    (let [sent     (atom [])
+          channel  (Object.)
+          spawned? (atom false)]
+      (registry/register! {:name "hosted-print"
+                           :hosted true
+                           :run-fn (fn [_] (println "hello hosted") 0)})
+      (nexus/-with-nexus {:root "/srv/isaac"}
+        (binding [sut/*server-root*       "/srv/isaac"
+                  sut/*stream-id-factory* (constantly "stream-hosted")
+                  sut/*spawn-process*     (fn [& _] (reset! spawned? true))]
+          (sut/receive-line! channel
+                             (json/generate-string {:type "start" :argv ["hosted-print"]})
+                             #(swap! sent conj %))))
+      (helper/await-condition #(some (fn [frame] (= "exit" (:type frame))) @sent) 5000)
+      (should= false @spawned?)
+      (should= {:type "start-ack" :stream-id "stream-hosted"} (first @sent))
+      (should= "hello hosted\n" (->> @sent (filter #(= "stdout" (:type %))) (map decode-data) (apply str)))
+      (should= 0 (:code (last @sent)))))
+
+  (it "cancels a hosted command at the hot-reloaded wall-clock timeout"
+    (let [sent      (atom [])
+          channel   (Object.)
+          shutdown? (promise)
+          cfg       (atom {:cli-server {:timeout-ms 1}})]
+      (registry/register! {:name "hosted-block"
+                           :hosted true
+                           :run-fn (fn [_]
+                                     (isaac.cli.host/on-shutdown! #(deliver shutdown? true))
+                                     (isaac.cli.host/block-until-cancelled!)
+                                     0)})
+      (nexus/-with-nexus {:root "/srv/isaac" :config cfg}
+        (binding [sut/*server-root*       "/srv/isaac"
+                  sut/*stream-id-factory* (constantly "stream-timeout")]
+          (sut/receive-line! channel
+                             (json/generate-string {:type "start" :argv ["hosted-block"]})
+                             #(swap! sent conj %))
+          (helper/await-condition #(some (fn [frame] (= "exit" (:type frame))) @sent) 5000)))
+      (helper/await-condition #(some (fn [frame] (= "exit" (:type frame))) @sent) 5000)
+      (should= true (deref shutdown? 1000 false))
+      (should= 124 (:code (last @sent)))))
 
   (it "spawns the isaac launcher with the client argv and emits a stream-id"
     (let [sent        (atom [])

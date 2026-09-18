@@ -3,14 +3,18 @@
     [babashka.process :as p]
     [cheshire.core :as json]
     [isaac.cli.args :as cli-args]
+    [isaac.cli.host :as host]
+    [isaac.cli.registry :as registry]
     [isaac.logger :as log]
+    [isaac.nexus :as nexus]
     [ring.util.codec :as codec])
   (:import
-    (java.io BufferedReader InputStreamReader PrintWriter)
+    (java.io BufferedReader InputStreamReader PipedInputStream PipedOutputStream PrintWriter)
     (java.util UUID)))
 
 (def ^:dynamic *spawn-process* nil)
 (def ^:dynamic *launcher-command* ["isaac"])
+(def ^:dynamic *server-root* nil)
 (def ^:dynamic *stream-id-factory* #(str (UUID/randomUUID)))
 (def ^:dynamic *grace-period-ms* 2000)
 (def ^:dynamic *schedule-grace-timeout*
@@ -53,6 +57,46 @@
       (*spawn-process* command (spawn-options argv stdout-tty))
       (p/process command (spawn-options argv stdout-tty)))))
 
+(defn- command-for [argv]
+  (let [{:keys [args]} (cli-args/extract-root-flag (vec (or argv [])))]
+    (registry/get-command (first args))))
+
+(defn- hosted-command? [argv]
+  (boolean (:hosted (command-for argv))))
+
+(declare route-frame!)
+
+(defn- line-writer [stream-id type]
+  (proxy [java.io.Writer] []
+    (write
+      ([chars offset length]
+       (let [text (if (string? chars)
+                    (subs chars offset (+ offset length))
+                    (String. ^chars chars offset length))]
+         (when (seq text)
+           (route-frame! stream-id {:type type :data (b64-encode text)}))))
+      ([value]
+       (let [text (if (number? value) (str (char value)) (str value))]
+         (route-frame! stream-id {:type type :data (b64-encode text)}))))
+    (flush [] nil)
+    (close [] nil)))
+
+(defn- start-hosted! [stream-id argv stdout-tty]
+  (let [input-writer (PipedOutputStream.)
+        input-reader (PipedInputStream. input-writer)
+        cli-host     (host/embedded-host {:in (InputStreamReader. input-reader)
+                                          :out (line-writer stream-id "stdout")
+                                          :err (line-writer stream-id "stderr")
+                                          :env {}
+                                          :cwd (or *server-root* ".")
+                                          :tty? stdout-tty})
+        task         (future
+                       (host/run-embedded* cli-host {:argv argv
+                                                    :root (or *server-root* (nexus/get :root))}))]
+    {:host cli-host
+     :stdin-writer (PrintWriter. input-writer true)
+     :task task}))
+
 (defn- channel-key [channel]
   (System/identityHashCode channel))
 
@@ -94,13 +138,17 @@
   ([stream-id reason]
    (when reason
      (log-command-finished! stream-id :reason reason))
-   (when-let [{:keys [proc stdin-writer channel]} (stream-state stream-id)]
+   (when-let [{:keys [proc task host stdin-writer channel]} (stream-state stream-id)]
      (try
        (when stdin-writer
          (.close ^PrintWriter stdin-writer))
        (catch Exception _))
      (try
-       (p/destroy proc)
+       (if task
+         (do
+           (host/cancel! host)
+           (future-cancel task))
+         (p/destroy proc))
        (catch Exception _))
      (when channel
        (unbind-channel! channel))
@@ -172,6 +220,31 @@
         stderr-f (stream-frames! stream-id (:err proc) "stderr")]
     (await-exit! stream-id proc stdout-f stderr-f)))
 
+(defn- command-timeout-ms [runtime]
+  (some-> (:config runtime) deref (get-in [:cli-server :timeout-ms])))
+
+(defn- finish-task! [stream-id exit-code]
+  (swap! streams assoc-in [stream-id :exited?] true)
+  (log-command-finished! stream-id :code exit-code)
+  (route-frame! stream-id {:type "exit" :code exit-code})
+  (when (attached? stream-id)
+    (swap! streams dissoc stream-id)))
+
+(defn- await-task! [stream-id task cli-host runtime]
+  (future
+    (try
+      (let [timeout-ms (command-timeout-ms runtime)
+            exit-code  (if timeout-ms
+                         (let [result (deref task timeout-ms ::timeout)]
+                           (if (= ::timeout result)
+                             (do (host/cancel! cli-host) (future-cancel task) 124)
+                             result))
+                         @task)]
+        (finish-task! stream-id (long exit-code)))
+      (catch Exception e
+        (when-let [send! (:send! (stream-state stream-id))]
+          (send-error! send! (.getMessage e)))))))
+
 (defn- now-ms []
   (long (*now-ms*)))
 
@@ -199,24 +272,29 @@
 (defn- start-stream! [channel argv stdout-tty send!]
   (when-let [existing-stream-id (stream-id-for-channel channel)]
     (destroy-stream! existing-stream-id))
-  (let [stream-id    (*stream-id-factory*)
-        proc         (start-process! argv stdout-tty)
-        stdin-writer (PrintWriter. (:in proc) true)]
-    (swap! streams assoc stream-id {:argv          (vec (or argv []))
-                                    :buffer       []
-                                    :channel      channel
-                                    :exited?      false
-                                    :grace-task   nil
-                                    :grace-token  nil
-                                    :proc         proc
-                                    :send!        send!
-                                    :started-at-ms (now-ms)
-                                    :stdin-writer stdin-writer
-                                    :stream-id    stream-id})
+  (let [stream-id (*stream-id-factory*)
+        runtime   (nexus/necho)
+        hosted?  (hosted-command? argv)
+        execution (if hosted?
+                    (start-hosted! stream-id argv stdout-tty)
+                    (let [proc (start-process! argv stdout-tty)]
+                      {:proc proc :stdin-writer (PrintWriter. (:in proc) true)}))]
+    (swap! streams assoc stream-id (merge {:argv          (vec (or argv []))
+                                           :buffer       []
+                                           :channel      channel
+                                           :exited?      false
+                                           :grace-task   nil
+                                           :grace-token  nil
+                                           :send!        send!
+                                           :started-at-ms (now-ms)
+                                           :stream-id    stream-id}
+                                          execution))
     (bind-channel! channel stream-id)
     (log-command-started! stream-id argv)
     (send-frame! send! {:type "start-ack" :stream-id stream-id})
-    (start-streaming! stream-id proc)
+    (if hosted?
+      (await-task! stream-id (:task execution) (:host execution) runtime)
+      (start-streaming! stream-id (:proc execution)))
     stream-id))
 
 (defn- attach-stream! [channel stream-id send!]
@@ -231,12 +309,15 @@
         (swap! streams dissoc stream-id)))
     (send-error! send! (str "unknown stream-id: " stream-id))))
 
+(defn -send-stdin! [stream-id data]
+  (when-let [writer (:stdin-writer (stream-state stream-id))]
+    (try
+      (.println ^PrintWriter writer data)
+      (catch Exception _))))
+
 (defn- send-stdin! [channel data]
   (when-let [stream-id (stream-id-for-channel channel)]
-    (when-let [writer (:stdin-writer (stream-state stream-id))]
-      (try
-        (.println ^PrintWriter writer data)
-        (catch Exception _)))))
+    (-send-stdin! stream-id data)))
 
 (defn- close-stdin! [channel]
   (when-let [stream-id (stream-id-for-channel channel)]
@@ -268,6 +349,11 @@
         (send-error! send! (str "unknown frame type: " (:type msg)))))
     (catch Exception e
       (send-error! send! (.getMessage e)))))
+
+(defn task-running? []
+  (boolean (some (fn [{:keys [task]}]
+                   (and task (not (realized? task))))
+                 (vals @streams))))
 
 (defn disconnect! [channel]
   (when-let [stream-id (stream-id-for-channel channel)]

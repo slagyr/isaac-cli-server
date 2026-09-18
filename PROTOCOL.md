@@ -6,8 +6,8 @@ this file in lockstep across both repos.
 
 The shape generalizes the ACP `/acp` route + `acp --remote` proxy: a WebSocket,
 authenticated at the HTTP upgrade, carrying framed IO — but **command-agnostic**.
-The server runs the real isaac launcher as a subprocess with the client's argv
-and pipes process IO back.
+Hosted commands execute in-process on a server worker thread with framed IO.
+Unmarked commands temporarily fall back to the real isaac launcher subprocess.
 
 ## Transport
 
@@ -25,7 +25,7 @@ and pipes process IO back.
 ```
 client                                   server
   │  ── upgrade (Authorization: Bearer …) ──▶  auth; accept or 401
-  │  ── {"type":"start","argv":[…],"stdout-tty":true} ─▶  spawn isaac <argv…> (subprocess)
+  │  ── {"type":"start","argv":[…],"stdout-tty":true} ─▶  dispatch isaac <argv…> (hosted task or transitional subprocess)
   │  ◀── {"type":"start-ack","stream-id":"…"}  resumable stream id
   │  ◀── {"type":"stdout","data":"…"} ──────  (0..N, streamed as produced)
   │  ◀── {"type":"stderr","data":"…"} ──────  (0..N, streamed, separate)
