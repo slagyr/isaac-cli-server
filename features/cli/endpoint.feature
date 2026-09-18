@@ -215,3 +215,55 @@ Feature: /cli WebSocket endpoint
     And the cli-server handler with a recording spawn stub
     When a /cli client sends start with argv ["fx-legacy","x"]
     Then the recorded spawn command is the isaac launcher with args ["fx-legacy","x"]
+
+  # --- stale basis: the server, not the client, knows its classpath is behind --
+  # Basis = foundation version + module SHAs (isaac-tki3 :basis). Config mtimes
+  # are exempt (hot-reloaded). Read-only commands still run; anything else is
+  # refused until restart. fx-read is a fixture command marked :read-only.
+
+  @wip
+  Scenario: a server whose module basis is stale refuses a mutating command with restart pending
+    Given the cli-server handler with the fixture commands registered
+    And the server's loaded module basis is behind the on-disk basis
+    When a /cli client sends start with argv ["fx-print","hi"]
+    Then the handler sends frames:
+      | type   | data                     | code |
+      | stderr | #".*restart pending.*"   |      |
+      | exit   |                          | 75   |
+    And the cli log has entries matching:
+      | level | event                       | argv           |
+      | :warn | :cli/refused-stale-basis    | ["fx-print" "hi"] |
+
+  @wip
+  Scenario: a server whose module basis is stale still runs a read-only command
+    Given the cli-server handler with the fixture commands registered
+    And the server's loaded module basis is behind the on-disk basis
+    When a /cli client sends start with argv ["fx-read"]
+    Then the handler sends frames:
+      | type   | data          | code |
+      | stdout | #".*read ok.*" |     |
+      | exit   |               | 0    |
+
+  @wip
+  Scenario: read-only is per subcommand when the manifest lists subcommands
+    fx-multi is :read-only #{"list"}: "list" runs, "set" is refused.
+    Given the cli-server handler with the fixture commands registered
+    And the server's loaded module basis is behind the on-disk basis
+    When a /cli client sends start with argv ["fx-multi","list"]
+    Then the handler sends frames:
+      | type | data | code |
+      | exit |      | 0    |
+    Given the cli-server handler with the fixture commands registered
+    And the server's loaded module basis is behind the on-disk basis
+    When a /cli client sends start with argv ["fx-multi","set"]
+    Then the handler sends frames:
+      | type | data | code |
+      | exit |      | 75   |
+
+  @wip
+  Scenario: a current basis runs everything
+    Given the cli-server handler with the fixture commands registered
+    When a /cli client sends start with argv ["fx-multi","set"]
+    Then the handler sends frames:
+      | type | data | code |
+      | exit |      | 0    |
