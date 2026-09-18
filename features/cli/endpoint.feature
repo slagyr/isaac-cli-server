@@ -104,3 +104,114 @@ Feature: /cli WebSocket endpoint
     And the cli log has entries matching:
       | level | event                 | code | duration-ms | stream-id |
       | :info | :cli/command-finished | 7    | #*          | #*        |
+
+  # --- isaac-qvhy: hosted commands run on a server thread, not a subprocess ---
+  # The fixture commands are registered in the live CLI registry by the Given
+  # (fx-echo, fx-print, fx-exit, fx-throw, fx-block, fx-local, fx-legacy); all
+  # are marked :hosted except fx-legacy, and fx-local is :local-only.
+
+  @wip
+  Scenario: a hosted command streams stdin to stdout before it exits (isaac-qvhy)
+    Given the cli-server handler with the fixture commands registered
+    When a /cli client sends start with argv ["fx-echo"]
+    And the /cli client sends stdin "hello pipe"
+    Then the handler sends frames:
+      | type   | data              | code |
+      | stdout | #".*hello pipe.*" |      |
+    When the /cli client sends stdin-close
+    Then the handler sends frames:
+      | type | data | code |
+      | exit |      | 0    |
+    And no subprocess was spawned
+
+  @wip
+  Scenario: a hosted command that calls exit is contained — the server keeps serving (isaac-qvhy)
+    Given the cli-server handler with the fixture commands registered
+    When a /cli client sends start with argv ["fx-exit","3"]
+    Then the handler sends frames:
+      | type | data | code |
+      | exit |      | 3    |
+    Given the cli-server handler with the fixture commands registered
+    When a /cli client sends start with argv ["fx-print","alive"]
+    Then the handler sends frames:
+      | type   | data         | code |
+      | stdout | #".*alive.*" |      |
+      | exit   |              | 0    |
+
+  @wip
+  Scenario: a hosted command that throws frames the message on stderr and exits 1 (isaac-qvhy)
+    Given the cli-server handler with the fixture commands registered
+    When a /cli client sends start with argv ["fx-throw","boom"]
+    Then the handler sends frames:
+      | type   | data        | code |
+      | stderr | #".*boom.*" |      |
+      | exit   |             | 1    |
+
+  @wip
+  Scenario: a hosted command leaves the server's process state untouched (isaac-qvhy)
+    Given the cli-server handler with the fixture commands registered
+    And the server process state is snapshotted
+    When a /cli client sends start with argv ["fx-print","hi"]
+    Then the handler sends frames:
+      | type | data | code |
+      | exit |      | 0    |
+    And the server process state is unchanged
+
+  @wip
+  Scenario: a local-only command is refused over the pipe (isaac-qvhy)
+    Given the cli-server handler with the fixture commands registered
+    When a /cli client sends start with argv ["fx-local"]
+    Then the handler sends frames:
+      | type   | data                     | code |
+      | stderr | #".*run this on the host.*" |   |
+      | exit   |                          | 2    |
+    And no subprocess was spawned
+
+  @wip
+  Scenario: a --root that is not the server's root is refused (isaac-qvhy)
+    Given the cli-server handler with the fixture commands registered
+    When a /cli client sends start with argv ["--root","/somewhere/else","fx-print","hi"]
+    Then the handler sends frames:
+      | type   | data          | code |
+      | stderr | #".*--root.*" |      |
+      | exit   |               | 2    |
+
+  @wip
+  Scenario: a dropped socket keeps the hosted command alive for the grace window, then cancels it (isaac-qvhy)
+    fx-block parks on block-until-cancelled! and its shutdown fn records that it ran.
+    Given the cli-server handler with the fixture commands registered and grace window 200 ms
+    When a /cli client sends start with argv ["fx-block"]
+    And the /cli client disconnects
+    Then the hosted command is still running
+    When the grace window elapses
+    Then the hosted command is no longer running
+    And the hosted command's shutdown fn ran
+
+  @wip
+  Scenario: a reattached client receives frames buffered while detached (isaac-qvhy)
+    Given the cli-server handler with the fixture commands registered and grace window 200 ms
+    When a /cli client sends start with argv ["fx-echo"]
+    And the /cli client disconnects
+    And the /cli client sends stdin "while away"
+    And a /cli client sends attach with the issued stream-id
+    Then the handler sends frames:
+      | type   | data              | code |
+      | stdout | #".*while away.*" |      |
+
+  @wip
+  Scenario: a hosted command is logged with argv, timing, and exit code (isaac-qvhy)
+    Given the cli-server handler with the fixture commands registered
+    When a /cli client sends start with argv ["fx-exit","7"]
+    Then the cli log has entries matching:
+      | level | event                | argv            | stream-id |
+      | :info | :cli/command-started | ["fx-exit" "7"] | #*        |
+    And the cli log has entries matching:
+      | level | event                 | code | duration-ms | stream-id |
+      | :info | :cli/command-finished | 7    | #*          | #*        |
+
+  @wip
+  Scenario: a command not yet marked hosted still runs as a subprocess (transitional; removed by isaac-dqy9)
+    Given the cli-server handler with the fixture commands registered
+    And the cli-server handler with a recording spawn stub
+    When a /cli client sends start with argv ["fx-legacy","x"]
+    Then the recorded spawn command is the isaac launcher with args ["fx-legacy","x"]
