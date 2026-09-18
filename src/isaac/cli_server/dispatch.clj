@@ -35,6 +35,7 @@
           loaded (nexus/get :module-basis)]
       (or (nil? loaded)
           (= loaded (classpath-cache/identity-basis config))))))
+(def ^:dynamic *principal* nil)
 
 (defonce ^:private streams (atom {}))
 (defonce ^:private channel->stream-id (atom {}))
@@ -88,6 +89,29 @@
     {:stderr "server restart pending — restart the server, or run with --local\n"
      :code 75}))
 
+(defn- principal-name [principal]
+  (when-let [name (:name principal)]
+    (if (keyword? name) (clojure.core/name name) (str name))))
+
+(defn- principal-scopes [principal]
+  (set (map #(if (keyword? %) % (keyword %)) (:scopes principal))))
+
+(defn- authorized-for-command? [principal argv]
+  (let [scopes (principal-scopes principal)]
+    (or (nil? principal)
+        (contains? scopes :*)
+        (contains? scopes :cli)
+        (and (contains? scopes :cli/read)
+             (read-only-command? argv (command-for argv))))))
+
+(defn- scope-refusal [argv]
+  (when-not (authorized-for-command? *principal* argv)
+    (log/warn :cli/refused-scope
+              :principal (principal-name *principal*)
+              :argv (vec argv))
+    {:stderr "requires cli\n"
+     :code 77}))
+
 (declare route-frame!)
 
 (defn- line-writer [stream-id type]
@@ -106,7 +130,7 @@
     (close [] nil)))
 
 (defn- start-hosted! [stream-id argv stdout-tty]
-  (if-let [{:keys [stderr code]} (stale-refusal argv)]
+  (if-let [{:keys [stderr code]} (or (scope-refusal argv) (stale-refusal argv))]
     {:refusal {:stderr stderr :code code}}
     (let [input-writer (PipedOutputStream.)
         input-reader (PipedInputStream. input-writer)
@@ -279,9 +303,11 @@
     (max 0 (- (now-ms) (long (or started-at-ms (now-ms)))))))
 
 (defn- log-command-started! [stream-id argv]
-  (log/log* :info :cli/command-started *file* 0
-            :argv (vec (or argv []))
-            :stream-id stream-id))
+  (apply log/log* :info :cli/command-started *file* 0
+         (concat [:argv (vec (or argv []))
+                  :stream-id stream-id]
+                 (when-let [name (principal-name *principal*)]
+                   [:principal name]))))
 
 (defn- log-command-finished! [stream-id & kvs]
   (when-let [{:keys [argv abandoned? finished-logged?]} (stream-state stream-id)]
@@ -301,10 +327,12 @@
   (let [stream-id (*stream-id-factory*)
         runtime   (nexus/necho)
         hosted?  (hosted-command? argv)
-        execution (if hosted?
-                    (start-hosted! stream-id argv stdout-tty)
-                    (let [proc (start-process! argv stdout-tty)]
-                      {:proc proc :stdin-writer (PrintWriter. (:in proc) true)}))]
+        execution (if-let [refusal (and (not hosted?) (scope-refusal argv))]
+                    {:refusal refusal}
+                    (if hosted?
+                      (start-hosted! stream-id argv stdout-tty)
+                      (let [proc (start-process! argv stdout-tty)]
+                        {:proc proc :stdin-writer (PrintWriter. (:in proc) true)})))]
     (swap! streams assoc stream-id (merge {:argv          (vec (or argv []))
                                            :buffer       []
                                            :channel      channel

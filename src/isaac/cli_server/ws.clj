@@ -45,4 +45,6 @@
                                 :client (request-client request)
                                 :uri    (:uri request)))
        :on-receive (fn [channel line]
-                     (dispatch/receive-line! channel line #(send-frame! channel %)))})))
+                     (binding [dispatch/*principal* (or dispatch/*principal*
+                                                        (:isaac/principal request))]
+                       (dispatch/receive-line! channel line #(send-frame! channel %))))})))

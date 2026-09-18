@@ -259,7 +259,6 @@ Feature: /cli WebSocket endpoint
   # upgrade request; the handler compares the command's :read-only hint
   # (isaac-kjzq) against the principal's scopes before running anything.
 
-  @wip
   Scenario: a principal scoped cli/read may run a read-only command (isaac-4o6r)
     Given the cli-server handler with the fixture commands registered
     And the /cli client is principal "viewer" with scopes "cli/read"
@@ -269,7 +268,6 @@ Feature: /cli WebSocket endpoint
       | stdout | #".*read ok.*" |      |
       | exit   |                | 0    |
 
-  @wip
   Scenario: a principal scoped cli/read is refused a mutating command before it runs (isaac-4o6r)
     Given the cli-server handler with the fixture commands registered
     And the /cli client is principal "viewer" with scopes "cli/read"
@@ -282,7 +280,6 @@ Feature: /cli WebSocket endpoint
       | level | event               | principal | argv            |
       | :warn | :cli/refused-scope  | viewer    | ["fx-print" "hi"] |
 
-  @wip
   Scenario: read-only per subcommand follows the manifest hint (isaac-4o6r)
     Given the cli-server handler with the fixture commands registered
     And the /cli client is principal "viewer" with scopes "cli/read"
@@ -297,7 +294,6 @@ Feature: /cli WebSocket endpoint
       | type | data | code |
       | exit |      | 77   |
 
-  @wip
   Scenario: a principal scoped cli runs everything (isaac-4o6r)
     Given the cli-server handler with the fixture commands registered
     And the /cli client is principal "ops" with scopes "cli"

@@ -14,7 +14,9 @@
     (String. (.decode (java.util.Base64/getDecoder) data) "UTF-8")))
 
 (describe "dispatch"
-  (around [it] (log/capture-logs (it)))
+  (around [it]
+    (binding [sut/*principal* nil]
+      (log/capture-logs (it))))
 
   (it "refuses a mutating hosted command when the loaded basis is stale"
     (let [sent    (atom [])
@@ -277,4 +279,53 @@
         (should= ["sessions" "list"] (:argv finished))
         (should-not (contains? finished :code))
         (should (integer? (:duration-ms finished)))
-        (should (<= 0 (:duration-ms finished)))))))
+        (should (<= 0 (:duration-ms finished))))))
+
+  (it "runs a read-only hosted command for a principal scoped cli/read"
+    (let [sent    (atom [])
+          channel (Object.)]
+      (registry/register! {:name "read" :hosted true :read-only true
+                           :run-fn (fn [_] (println "read ok") 0)})
+      (nexus/-with-nexus {:root "/srv/isaac"}
+        (binding [sut/*principal*         {:name :viewer :scopes #{:cli/read}}
+                  sut/*stream-id-factory* (constantly "scope-read")]
+          (sut/receive-line! channel
+                             (json/generate-string {:type "start" :argv ["read"]})
+                             #(swap! sent conj %))))
+      (helper/await-condition #(some (fn [frame] (= "exit" (:type frame))) @sent) 5000)
+      (should= 0 (:code (last @sent)))))
+
+  (it "refuses a mutating command for a principal scoped only cli/read"
+    (let [sent    (atom [])
+          channel (Object.)
+          ran?    (atom false)]
+      (registry/register! {:name "mutate" :hosted true
+                           :run-fn (fn [_] (reset! ran? true) 0)})
+      (nexus/-with-nexus {:root "/srv/isaac"}
+        (binding [sut/*principal*         {:name :viewer :scopes #{:cli/read}}
+                  sut/*stream-id-factory* (constantly "scope-mutate")]
+          (sut/receive-line! channel
+                             (json/generate-string {:type "start" :argv ["mutate"]})
+                             #(swap! sent conj %))))
+      (helper/await-condition #(some (fn [frame] (= "exit" (:type frame))) @sent) 5000)
+      (should-contain "requires cli" (->> @sent (filter #(= "stderr" (:type %))) first decode-data))
+      (should= 77 (:code (last @sent)))
+      (should-not @ran?)
+      (should= :cli/refused-scope (:event (first @log/captured-logs)))
+      (should= "viewer" (:principal (first @log/captured-logs)))))
+
+  (it "runs a mutating command for a principal scoped cli and logs the principal"
+    (let [sent    (atom [])
+          channel (Object.)]
+      (registry/register! {:name "mutate" :hosted true :run-fn (constantly 0)})
+      (nexus/-with-nexus {:root "/srv/isaac"}
+        (binding [sut/*principal*         {:name :ops :scopes #{:cli}}
+                  sut/*stream-id-factory* (constantly "scope-cli")]
+          (sut/receive-line! channel
+                             (json/generate-string {:type "start" :argv ["mutate"]})
+                             #(swap! sent conj %))))
+      (helper/await-condition #(some (fn [frame] (= "exit" (:type frame))) @sent) 5000)
+      (should= 0 (:code (last @sent)))
+      (let [started (some #(when (= :cli/command-started (:event %)) %) @log/captured-logs)]
+        (should= "ops" (:principal started)))))
+)

@@ -79,11 +79,21 @@
   (alter-var-root #'dispatch/*server-root* (constantly "/srv/isaac"))
   (alter-var-root #'ws/*frame-sender* (constantly nil)))
 
+(defn- parse-scopes [scopes]
+  (->> (str/split (str scopes) #",")
+       (map str/trim)
+       (remove str/blank?)
+       (map #(if (= "*" %) :* (keyword %)))
+       set))
+
 (defn- invoke-handler! []
   (with-redefs [httpkit/as-channel (fn [_request opts]
                                      (g/assoc! :cli-server-channel-opts opts)
                                      {:body :channel})]
-    (let [response (ws/handler {:websocket? true :uri "/cli" :headers {}})]
+    (let [principal (g/get :cli-server-principal)
+          request   (cond-> {:websocket? true :uri "/cli" :headers {}}
+                      principal (assoc :isaac/principal principal))
+          response  (ws/handler request)]
       (g/should= :channel (:body response))
       (when-let [on-open (:on-open (g/get :cli-server-channel-opts))]
         (on-open (g/get :cli-server-ws-channel))))))
@@ -181,6 +191,11 @@
 
 (defn server-basis-behind []
   (g/assoc! :cli-server-basis-current? false))
+
+(defn cli-client-is-principal [name scopes]
+  (g/assoc! :cli-server-principal {:name (keyword name) :scopes (parse-scopes scopes)})
+  (when (g/get :cli-server-channel-opts)
+    (invoke-handler!)))
 
 (defn cli-client-sends-start [argv-text]
   (when-not (g/get :cli-server-channel-opts)
@@ -302,6 +317,8 @@
   isaac.cli-server.cli-server-steps/cli-server-handler-with-fixture-commands-and-grace)
 (defgiven "the server process state is snapshotted" isaac.cli-server.cli-server-steps/process-state-snapshotted)
 (defgiven "the server's loaded module basis is behind the on-disk basis" isaac.cli-server.cli-server-steps/server-basis-behind)
+(defgiven "the /cli client is principal {name:string} with scopes {scopes:string}"
+  isaac.cli-server.cli-server-steps/cli-client-is-principal)
 (defgiven #"^the cli-server handler with a recording spawn stub that exits with code (\d+)$"
   isaac.cli-server.cli-server-steps/cli-server-handler-with-recording-spawn-stub-that-exits-with-code)
 

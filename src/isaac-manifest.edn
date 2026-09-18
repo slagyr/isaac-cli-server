@@ -1,5 +1,5 @@
 {:id          :isaac.cli-server
- :version     "0.2.1"
+ :version     "0.2.2"
  :factory     isaac.module.protocol/module
  :description "Remote CLI server: a /cli WebSocket endpoint that runs hosted commands in-process and pipes command IO back. See PROTOCOL.md."
 
@@ -14,4 +14,4 @@
  ;; The handler authenticates at the upgrade, then runs the main CLI dispatch
  ;; with the client's handshake argv and frames the process IO.
  :isaac.http/route
- [{:method :get :path "/cli" :handler isaac.cli-server.ws/handler}]}
+ [{:method :get :path "/cli" :handler isaac.cli-server.ws/handler :scope :cli}]}
