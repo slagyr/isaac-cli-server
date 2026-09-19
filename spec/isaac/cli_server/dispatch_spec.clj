@@ -38,13 +38,15 @@
           channel (Object.)]
       (registry/register! {:name "read" :hosted true :read-only true
                            :run-fn (fn [_] (println "read ok") 0)})
+      ;; The hosted task runs on a future and reads the nexus; keep the
+      ;; scope open until it exits or the restore races the command.
       (nexus/-with-nexus {:root "/srv/isaac"}
         (binding [sut/*basis-current?*    (constantly false)
                   sut/*stream-id-factory* (constantly "stale-read")]
           (sut/receive-line! channel
                              (json/generate-string {:type "start" :argv ["read"]})
-                             #(swap! sent conj %))))
-      (helper/await-condition #(some (fn [frame] (= "exit" (:type frame))) @sent) 5000)
+                             #(swap! sent conj %)))
+        (helper/await-condition #(some (fn [frame] (= "exit" (:type frame))) @sent) 5000))
       (should= 0 (:code (last @sent)))))
 
   (it "applies read-only sets to the first subcommand"
