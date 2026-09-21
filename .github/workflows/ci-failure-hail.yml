@@ -10,12 +10,14 @@ on:
 permissions:
   contents: read
   actions: read
+  id-token: write
 
 jobs:
   hail-on-regression:
     permissions:
       contents: read
       actions: read
+      id-token: write
     uses: slagyr/orchestration/.github/workflows/ci-failure-hail-reusable.yml@main
     with:
       repository_owner: ${{ github.repository_owner }}
@@ -32,4 +34,3 @@ jobs:
       workflow_actor: ${{ github.event.workflow_run.actor.login }}
     secrets:
       ISAAC_HAIL_URL: ${{ secrets.ISAAC_HAIL_URL }}
-      ISAAC_SERVER_AUTH_TOKEN: ${{ secrets.ISAAC_SERVER_AUTH_TOKEN }}
