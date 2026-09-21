@@ -1,6 +1,5 @@
 (ns isaac.cli-server.cli-server-steps
   (:require
-    [babashka.process :as p]
     [cheshire.core :as json]
     [clojure.edn :as edn]
     [clojure.string :as str]
@@ -38,24 +37,6 @@
                    frames)))
        vec))
 
-(defn- process-options []
-  {:in :pipe :out :pipe :err :pipe})
-
-(defn- shell-process [command]
-  (let [proc (p/process ["sh" "-c" command] (process-options))]
-    (g/assoc! :cli-server-proc proc)
-    proc))
-
-(defn- recording-process [command _opts]
-  (g/update! :cli-server-spawn-count (fnil inc 0))
-  (g/assoc! :cli-server-recorded-command command)
-  (shell-process "exit 0"))
-
-(defn- recording-process-with-exit-code [exit-code]
-  (fn [command _opts]
-    (g/assoc! :cli-server-recorded-command command)
-    (shell-process (str "exit " exit-code))))
-
 (defn- reset-handler-state! []
   (log/set-output! :memory)
   (log/clear-entries!)
@@ -68,14 +49,9 @@
   (g/assoc! :cli-server-grace-period-ms nil)
   (g/assoc! :cli-server-grace-tasks {})
   (g/assoc! :cli-server-disconnected? false)
-  (g/assoc! :cli-server-proc nil)
-  (g/assoc! :cli-server-recorded-command nil)
-  (g/assoc! :cli-server-spawn-count 0)
   (g/assoc! :cli-server-shutdown-ran? (atom false))
   (g/assoc! :cli-server-sent-frames (atom []))
-  (g/assoc! :cli-server-spawn-factory nil)
   (g/assoc! :cli-server-ws-channel (Object.))
-  (alter-var-root #'dispatch/*spawn-process* (constantly nil))
   (alter-var-root #'dispatch/*server-root* (constantly "/srv/isaac"))
   (alter-var-root #'ws/*frame-sender* (constantly nil)))
 
@@ -107,57 +83,36 @@
 (defn cli-server-handler []
   (install-handler!))
 
-(defn cli-server-handler-with-spawn-command [command]
-  (install-handler!)
-  (g/assoc! :cli-server-spawn-factory (fn [_request _opts]
-                                        (shell-process command))))
-
-(defn cli-server-handler-with-spawn-command-and-grace-window [command grace-ms]
-  (install-handler!)
-  (g/assoc! :cli-server-grace-period-ms (Long/parseLong (str grace-ms)))
-  (g/assoc! :cli-server-spawn-factory (fn [_request _opts]
-                                        (shell-process command))))
-
-(defn cli-server-handler-with-recording-spawn-stub []
-  (install-handler!)
-  (g/assoc! :cli-server-spawn-factory recording-process))
-
-(defn cli-server-handler-with-recording-spawn-stub-that-exits-with-code [exit-code]
-  (install-handler!)
-  (g/assoc! :cli-server-spawn-factory (recording-process-with-exit-code exit-code)))
-
 (defn- register-fixture-commands! []
   (let [shutdown-ran? (g/get :cli-server-shutdown-ran?)]
-    (registry/register! {:name "fx-echo" :hosted true
+    (registry/register! {:name "fx-echo"
                          :run-fn (fn [_]
                                    (loop []
                                      (when-let [line (read-line)]
                                        (println line)
                                        (recur)))
                                    0)})
-    (registry/register! {:name "fx-print" :hosted true
+    (registry/register! {:name "fx-print"
                          :run-fn (fn [{:keys [_raw-args]}] (println (str/join " " _raw-args)) 0)})
-    (registry/register! {:name "fx-read" :hosted true :read-only true
+    (registry/register! {:name "fx-read" :read-only true
                          :run-fn (fn [_] (println "read ok") 0)})
-    (registry/register! {:name "fx-multi" :hosted true :read-only #{"list"}
+    (registry/register! {:name "fx-multi" :read-only #{"list"}
                          :run-fn (constantly 0)})
-    (registry/register! {:name "fx-exit" :hosted true
+    (registry/register! {:name "fx-exit"
                          :run-fn (fn [{:keys [_raw-args]}] (host/exit! (parse-long (first _raw-args))))})
-    (registry/register! {:name "fx-throw" :hosted true
+    (registry/register! {:name "fx-throw"
                          :run-fn (fn [{:keys [_raw-args]}] (throw (ex-info (first _raw-args) {})))})
-    (registry/register! {:name "fx-block" :hosted true
+    (registry/register! {:name "fx-block"
                          :run-fn (fn [_]
                                    (host/on-shutdown! #(reset! shutdown-ran? true))
                                    (host/block-until-cancelled!)
                                    0)})
-    (registry/register! {:name "fx-local" :hosted true :local-only true :run-fn (constantly 0)})
-    (registry/register! {:name "fx-legacy" :run-fn (constantly 0)})))
+    (registry/register! {:name "fx-local" :local-only true :run-fn (constantly 0)})))
 
 (defn cli-server-handler-with-fixture-commands []
   (install-handler!)
   (nexus/init! {:root "/srv/isaac"})
-  (register-fixture-commands!)
-  (g/assoc! :cli-server-spawn-factory recording-process))
+  (register-fixture-commands!))
 
 (defn cli-server-handler-with-fixture-commands-and-grace [grace-ms]
   (cli-server-handler-with-fixture-commands)
@@ -185,7 +140,6 @@
     (binding [dispatch/*grace-period-ms*      (or (g/get :cli-server-grace-period-ms) dispatch/*grace-period-ms*)
               dispatch/*schedule-grace-timeout* schedule-grace-timeout!
               dispatch/*cancel-grace-timeout* cancel-grace-timeout!
-              dispatch/*spawn-process*        (g/get :cli-server-spawn-factory)
               dispatch/*basis-current?*        #(not (false? (g/get :cli-server-basis-current?)))]
       (on-receive (g/get :cli-server-ws-channel) line))))
 
@@ -218,7 +172,6 @@
     (binding [dispatch/*grace-period-ms*      (or (g/get :cli-server-grace-period-ms) dispatch/*grace-period-ms*)
               dispatch/*schedule-grace-timeout* schedule-grace-timeout!
               dispatch/*cancel-grace-timeout* cancel-grace-timeout!
-              dispatch/*spawn-process*        (g/get :cli-server-spawn-factory)
               dispatch/*basis-current?*        #(not (false? (g/get :cli-server-basis-current?)))]
       (on-receive (g/get :cli-server-ws-channel)
                   (json/generate-string {:type "attach" :stream-id stream-id})))))
@@ -254,23 +207,11 @@
   (helper/await-condition #(empty? (:failures (handler-frame-result table))) 15000)
   (g/should= [] (:failures (handler-frame-result table))))
 
-(defn recorded-spawn-command-is [argv-text]
-  (let [expected (into ["isaac"] (parse-argv argv-text))]
-    (helper/await-condition #(some? (g/get :cli-server-recorded-command)) 5000)
-    (g/should= expected (g/get :cli-server-recorded-command))))
-
-(defn spawned-subprocess-running []
-  (let [proc (g/get :cli-server-proc)]
-    (g/should (and proc (.isAlive (:proc proc))))))
-
 (defn grace-window-elapses []
   (doseq [[token task] (g/get :cli-server-grace-tasks)]
     (when (= task (get (g/get :cli-server-grace-tasks) token))
       (g/update! :cli-server-grace-tasks dissoc token)
       (task))))
-
-(defn no-subprocess-spawned []
-  (g/should= 0 (g/get :cli-server-spawn-count)))
 
 (defn hosted-command-running []
   (g/should (dispatch/task-running?)))
@@ -296,22 +237,12 @@
               :nexus    (nexus/necho)
               :registry (registry/snapshot)}))
 
-(defn spawned-subprocess-not-running []
-  (helper/await-condition #(let [proc (g/get :cli-server-proc)]
-                              (and proc (not (.isAlive (:proc proc))))) 5000)
-  (let [proc (g/get :cli-server-proc)]
-    (g/should (and proc (not (.isAlive (:proc proc)))))))
-
 (g/after-scenario reset-handler-state!)
 
 (def cli-log-entries-match #'foundation-log/log-entries-match)
 (def cli-log-entries-dont-match #'foundation-log/log-entries-dont-match)
 
 (defgiven "the cli-server handler" isaac.cli-server.cli-server-steps/cli-server-handler)
-(defgiven #"^the cli-server handler with spawn command \"([^\"]+)\"$" isaac.cli-server.cli-server-steps/cli-server-handler-with-spawn-command)
-(defgiven #"^the cli-server handler with spawn command \"([^\"]+)\" and grace window (\d+) ms$"
-  isaac.cli-server.cli-server-steps/cli-server-handler-with-spawn-command-and-grace-window)
-(defgiven "the cli-server handler with a recording spawn stub" isaac.cli-server.cli-server-steps/cli-server-handler-with-recording-spawn-stub)
 (defgiven "the cli-server handler with the fixture commands registered" isaac.cli-server.cli-server-steps/cli-server-handler-with-fixture-commands)
 (defgiven #"^the cli-server handler with the fixture commands registered and grace window (\d+) ms$"
   isaac.cli-server.cli-server-steps/cli-server-handler-with-fixture-commands-and-grace)
@@ -319,8 +250,6 @@
 (defgiven "the server's loaded module basis is behind the on-disk basis" isaac.cli-server.cli-server-steps/server-basis-behind)
 (defgiven "the /cli client is principal {name:string} with scopes {scopes:string}"
   isaac.cli-server.cli-server-steps/cli-client-is-principal)
-(defgiven #"^the cli-server handler with a recording spawn stub that exits with code (\d+)$"
-  isaac.cli-server.cli-server-steps/cli-server-handler-with-recording-spawn-stub-that-exits-with-code)
 
 (defwhen "a /cli client sends start with argv {argv:string}" isaac.cli-server.cli-server-steps/cli-client-sends-start)
 (defwhen "the /cli client sends stdin {text:string}" isaac.cli-server.cli-server-steps/cli-client-sends-stdin)
@@ -330,10 +259,6 @@
 (defwhen "the grace window elapses" isaac.cli-server.cli-server-steps/grace-window-elapses)
 
 (defthen "the handler sends frames:" isaac.cli-server.cli-server-steps/handler-sends-frames)
-(defthen "the recorded spawn command is the isaac launcher with args {argv:string}" isaac.cli-server.cli-server-steps/recorded-spawn-command-is)
-(defthen "the spawned subprocess is still running" isaac.cli-server.cli-server-steps/spawned-subprocess-running)
-(defthen "the spawned subprocess is no longer running" isaac.cli-server.cli-server-steps/spawned-subprocess-not-running)
-(defthen "no subprocess was spawned" isaac.cli-server.cli-server-steps/no-subprocess-spawned)
 (defthen "the hosted command is still running" isaac.cli-server.cli-server-steps/hosted-command-running)
 (defthen "the hosted command is no longer running" isaac.cli-server.cli-server-steps/hosted-command-not-running)
 (defthen "the hosted command's shutdown fn ran" isaac.cli-server.cli-server-steps/hosted-shutdown-ran)

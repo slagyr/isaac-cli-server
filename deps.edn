@@ -38,7 +38,6 @@
                                                                               :git/sha "ad4ba5d86a104356c5e7de3a0a0360e2528f0db8"
                                                                               :deps/root "spec-support"}
                             speclj/speclj                                  {:mvn/version "3.13.0"}
-                            babashka/process                               {:mvn/version "0.5.22"}
                             io.github.slagyr/gherclj                       {:git/tag "v1.3.0" :git/sha "9c3bb1d"}
                             org.babashka/http-client                       {:mvn/version "0.4.22"}}}
 

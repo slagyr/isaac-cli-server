@@ -1,6 +1,5 @@
 (ns isaac.cli-server.dispatch
   (:require
-    [babashka.process :as p]
     [cheshire.core :as json]
     [clojure.string :as str]
     [isaac.cli.args :as cli-args]
@@ -11,11 +10,9 @@
     [isaac.startup.classpath-cache :as classpath-cache]
     [ring.util.codec :as codec])
   (:import
-    (java.io BufferedReader InputStreamReader PipedInputStream PipedOutputStream PrintWriter)
-    (java.util UUID)))
+    (java.util UUID)
+    (java.util.concurrent LinkedBlockingQueue)))
 
-(def ^:dynamic *spawn-process* nil)
-(def ^:dynamic *launcher-command* ["isaac"])
 (def ^:dynamic *server-root* nil)
 (def ^:dynamic *stream-id-factory* #(str (UUID/randomUUID)))
 (def ^:dynamic *grace-period-ms* 2000)
@@ -50,28 +47,9 @@
 (defn- send-error! [send! message]
   (send-frame! send! {:type "error" :message message}))
 
-(defn- spawn-options [argv stdout-tty]
-  (let [{:keys [root]} (cli-args/extract-root-flag (vec (or argv [])))]
-    (cond-> {:in :pipe :out :pipe :err :pipe}
-      root       (assoc :dir root)
-      stdout-tty (assoc :extra-env {"FORCE_COLOR" "1"}))))
-
-(defn- launcher-command [argv]
-  (into (vec (or *launcher-command* ["isaac"]))
-        (vec (or argv []))))
-
-(defn- start-process! [argv stdout-tty]
-  (let [command (launcher-command argv)]
-    (if *spawn-process*
-      (*spawn-process* command (spawn-options argv stdout-tty))
-      (p/process command (spawn-options argv stdout-tty)))))
-
 (defn- command-for [argv]
   (let [{:keys [args]} (cli-args/extract-root-flag (vec (or argv [])))]
     (registry/get-command (first args))))
-
-(defn- hosted-command? [argv]
-  (boolean (:hosted (command-for argv))))
 
 (defn- first-subcommand [argv]
   (let [{:keys [args]} (cli-args/extract-root-flag (vec (or argv [])))]
@@ -129,22 +107,52 @@
     (flush [] nil)
     (close [] nil)))
 
+(def ^:private stdin-eof ::stdin-eof)
+
+(defn- frame-reader
+  "Reader fed by `stdin` frames. java.io.PipedInputStream binds to the thread
+   that last wrote it and throws \"Write end dead\" once that thread exits — and
+   every frame arrives on whichever server worker happens to carry it. A queue
+   has no thread affinity, so the command's stdin survives the socket's threads."
+  [^LinkedBlockingQueue queue]
+  (let [pending (volatile! "")]
+    (proxy [java.io.Reader] []
+      (read [^chars cbuf ^Integer off ^Integer len]
+        (loop []
+          (let [waiting @pending]
+            (cond
+              (= stdin-eof waiting) -1
+
+              (pos? (count waiting))
+              (let [n (min (int len) (count waiting))]
+                (.getChars ^String waiting 0 n cbuf (int off))
+                (vreset! pending (subs waiting n))
+                n)
+
+              :else
+              (do (vreset! pending (.take queue))
+                  (recur))))))
+      (close [] (vreset! pending stdin-eof)))))
+
+(defn- close-stdin-queue! [^LinkedBlockingQueue queue]
+  (when queue
+    (.offer queue stdin-eof)))
+
 (defn- start-hosted! [stream-id argv stdout-tty]
   (if-let [{:keys [stderr code]} (or (scope-refusal argv) (stale-refusal argv))]
     {:refusal {:stderr stderr :code code}}
-    (let [input-writer (PipedOutputStream.)
-        input-reader (PipedInputStream. input-writer)
-        cli-host     (host/embedded-host {:in (InputStreamReader. input-reader)
-                                          :out (line-writer stream-id "stdout")
-                                          :err (line-writer stream-id "stderr")
-                                          :env {}
-                                          :cwd (or *server-root* ".")
-                                          :tty? stdout-tty})
-        task         (future
-                       (host/run-embedded* cli-host {:argv argv
-                                                    :root (or *server-root* (nexus/get :root))}))]
+    (let [stdin-queue (LinkedBlockingQueue.)
+          cli-host    (host/embedded-host {:in (frame-reader stdin-queue)
+                                           :out (line-writer stream-id "stdout")
+                                           :err (line-writer stream-id "stderr")
+                                           :env {}
+                                           :cwd (or *server-root* ".")
+                                           :tty? stdout-tty})
+          task        (future
+                        (host/run-embedded* cli-host {:argv argv
+                                                      :root (or *server-root* (nexus/get :root))}))]
       {:host cli-host
-       :stdin-writer (PrintWriter. input-writer true)
+       :stdin-queue stdin-queue
        :task task})))
 
 (defn- channel-key [channel]
@@ -188,17 +196,14 @@
   ([stream-id reason]
    (when reason
      (log-command-finished! stream-id :reason reason))
-   (when-let [{:keys [proc task host stdin-writer channel]} (stream-state stream-id)]
+   (when-let [{:keys [task host stdin-queue channel]} (stream-state stream-id)]
      (try
-       (when stdin-writer
-         (.close ^PrintWriter stdin-writer))
+       (close-stdin-queue! stdin-queue)
        (catch Exception _))
      (try
-       (if task
-         (do
-           (host/cancel! host)
-           (future-cancel task))
-         (p/destroy proc))
+       (when task
+         (host/cancel! host)
+         (future-cancel task))
        (catch Exception _))
      (when channel
        (unbind-channel! channel))
@@ -236,40 +241,6 @@
     (send-live-frame! stream-id frame)
     (buffer-frame! stream-id frame)))
 
-(defn- stream-frames! [stream-id stream type]
-  (future
-    (try
-      (with-open [reader (BufferedReader. (InputStreamReader. stream))]
-        (loop []
-          (when-let [line (.readLine reader)]
-            (route-frame! stream-id {:type type :data (b64-encode (str line "\n"))})
-            (recur))))
-      (catch Exception _))))
-
-(defn- await-exit! [stream-id proc stdout-f stderr-f]
-  (future
-    (try
-      (let [process    ^Process (:proc proc)
-            exit-code  (do
-                         (.waitFor process)
-                         @stdout-f
-                         @stderr-f
-                         (long (.exitValue process)))
-            exit-frame {:type "exit" :code exit-code}]
-        (swap! streams assoc-in [stream-id :exited?] true)
-        (log-command-finished! stream-id :code exit-code)
-        (route-frame! stream-id exit-frame)
-        (when (attached? stream-id)
-          (swap! streams dissoc stream-id)))
-      (catch Exception e
-        (when-let [send! (:send! (stream-state stream-id))]
-          (send-error! send! (.getMessage e)))))))
-
-(defn- start-streaming! [stream-id proc]
-  (let [stdout-f (stream-frames! stream-id (:out proc) "stdout")
-        stderr-f (stream-frames! stream-id (:err proc) "stderr")]
-    (await-exit! stream-id proc stdout-f stderr-f)))
-
 (defn- command-timeout-ms [runtime]
   (some-> (:config runtime) deref (get-in [:cli-server :timeout-ms])))
 
@@ -305,7 +276,8 @@
 (defn- log-command-started! [stream-id argv]
   (apply log/log* :info :cli/command-started *file* 0
          (concat [:argv (vec (or argv []))
-                  :stream-id stream-id]
+                  :stream-id stream-id
+                  :hosted true]
                  (when-let [name (principal-name *principal*)]
                    [:principal name]))))
 
@@ -326,13 +298,7 @@
     (destroy-stream! existing-stream-id))
   (let [stream-id (*stream-id-factory*)
         runtime   (nexus/necho)
-        hosted?  (hosted-command? argv)
-        execution (if-let [refusal (and (not hosted?) (scope-refusal argv))]
-                    {:refusal refusal}
-                    (if hosted?
-                      (start-hosted! stream-id argv stdout-tty)
-                      (let [proc (start-process! argv stdout-tty)]
-                        {:proc proc :stdin-writer (PrintWriter. (:in proc) true)})))]
+        execution (start-hosted! stream-id argv stdout-tty)]
     (swap! streams assoc stream-id (merge {:argv          (vec (or argv []))
                                            :buffer       []
                                            :channel      channel
@@ -350,9 +316,7 @@
       (do
         (route-frame! stream-id {:type "stderr" :data (b64-encode stderr)})
         (finish-task! stream-id code))
-      (if hosted?
-        (await-task! stream-id (:task execution) (:host execution) runtime)
-        (start-streaming! stream-id (:proc execution))))
+      (await-task! stream-id (:task execution) (:host execution) runtime))
     stream-id))
 
 (defn- attach-stream! [channel stream-id send!]
@@ -368,9 +332,9 @@
     (send-error! send! (str "unknown stream-id: " stream-id))))
 
 (defn -send-stdin! [stream-id data]
-  (when-let [writer (:stdin-writer (stream-state stream-id))]
+  (when-let [^LinkedBlockingQueue queue (:stdin-queue (stream-state stream-id))]
     (try
-      (.println ^PrintWriter writer data)
+      (.put queue (str data "\n"))
       (catch Exception _))))
 
 (defn- send-stdin! [channel data]
@@ -379,11 +343,11 @@
 
 (defn- close-stdin! [channel]
   (when-let [stream-id (stream-id-for-channel channel)]
-    (when-let [stdin-writer (:stdin-writer (stream-state stream-id))]
+    (when-let [stdin-queue (:stdin-queue (stream-state stream-id))]
       (try
-        (.close ^PrintWriter stdin-writer)
+        (close-stdin-queue! stdin-queue)
         (catch Exception _))
-      (swap! streams update stream-id dissoc :stdin-writer))))
+      (swap! streams update stream-id dissoc :stdin-queue))))
 
 (defn receive-line!
   "Handle one client JSON frame on `channel`. `send!` is invoked with wire maps."
