@@ -166,7 +166,6 @@ Feature: /cli WebSocket endpoint
   # :cli/read is not a scope. Empty argv is usage, not a command.
   # fx-echo reads until stdin closes.
 
-  @wip
   Scenario: a principal holding only one command scope runs that command (isaac-jvzn)
     Given the cli-server handler with the fixture commands registered
     And the /cli client is principal "quill" with scopes "cli/fx-print"
@@ -179,7 +178,6 @@ Feature: /cli WebSocket endpoint
       | level | event                | principal | argv                     |
       | :info | :cli/command-started | quill     | ["fx-print" "painted"]   |
 
-  @wip
   Scenario: a principal holding only one command scope is refused a different command before it runs (isaac-jvzn)
     Given the cli-server handler with the fixture commands registered
     And the /cli client is principal "quill" with scopes "cli/fx-print"
@@ -193,7 +191,6 @@ Feature: /cli WebSocket endpoint
       | level | event              | principal | argv        |
       | :warn | :cli/refused-scope | quill     | ["fx-echo"] |
 
-  @wip
   Scenario: a principal holding cli runs a command a narrow token cannot (isaac-jvzn)
     Given the cli-server handler with the fixture commands registered
     And the /cli client is principal "helm" with scopes "cli"
@@ -206,7 +203,6 @@ Feature: /cli WebSocket endpoint
       | level | event                | principal | argv        |
       | :info | :cli/command-started | helm      | ["fx-echo"] |
 
-  @wip
   Scenario: a principal holding every scope runs a hosted command (isaac-jvzn)
     Given the cli-server handler with the fixture commands registered
     And the /cli client is principal "skipper" with scopes "*"
@@ -216,7 +212,6 @@ Feature: /cli WebSocket endpoint
       | type | data | code |
       | exit |      | 0    |
 
-  @wip
   Scenario: a principal holding cli is still refused a local-only command (isaac-jvzn)
     Given the cli-server handler with the fixture commands registered
     And the /cli client is principal "helm" with scopes "cli"
@@ -226,7 +221,6 @@ Feature: /cli WebSocket endpoint
       | stderr | #".*run this on the host.*" |      |
       | exit   |                             | 2    |
 
-  @wip
   Scenario: a principal holding only one command scope may ask for usage (isaac-jvzn)
     Given the cli-server handler with the fixture commands registered
     And the /cli client is principal "quill" with scopes "cli/fx-print"

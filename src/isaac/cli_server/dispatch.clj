@@ -74,21 +74,24 @@
 (defn- principal-scopes [principal]
   (set (map #(if (keyword? %) % (keyword %)) (:scopes principal))))
 
-(defn- authorized-for-command? [principal argv]
-  (let [scopes (principal-scopes principal)]
-    (or (nil? principal)
-        (contains? scopes :*)
-        (contains? scopes :cli)
-        (and (contains? scopes :cli/read)
-             (read-only-command? argv (command-for argv))))))
+(defn- required-scope [argv]
+  (let [{:keys [args]} (cli-args/extract-root-flag (vec (or argv [])))
+        command (first args)]
+    (when (and (seq command) (not (str/starts-with? command "-")))
+      (keyword "cli" command))))
 
 (defn- scope-refusal [argv]
-  (when-not (authorized-for-command? *principal* argv)
-    (log/warn :cli/refused-scope
-              :principal (principal-name *principal*)
-              :argv (vec argv))
-    {:stderr "requires cli\n"
-     :code 77}))
+  (let [required (required-scope argv)
+        scopes   (principal-scopes *principal*)]
+    (when (and *principal* required
+               (not (or (contains? scopes :*)
+                        (contains? scopes :cli)
+                        (contains? scopes required))))
+      (log/warn :cli/refused-scope
+                :principal (principal-name *principal*)
+                :argv (vec argv))
+      {:stderr (str "requires " (subs (str required) 1) "\n")
+       :code 77})))
 
 (declare route-frame!)
 
