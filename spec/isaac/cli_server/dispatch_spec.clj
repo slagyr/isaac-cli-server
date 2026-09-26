@@ -72,6 +72,31 @@
       (should= "hello hosted\n" (stdout-text @sent))
       (should= 0 (:code (last @sent)))))
 
+  (it "waits for the start acknowledgement before running a hosted command"
+    (let [sent         (atom [])
+          channel     (Object.)
+          ack-entered (promise)
+          release-ack (promise)
+          ran?        (atom false)]
+      (registry/register! {:name "ack-first"
+                           :run-fn (fn [_] (reset! ran? true) 0)})
+      (nexus/-with-nexus {:root "/srv/isaac"}
+        (binding [sut/*stream-id-factory* (constantly "stream-ack-first")]
+          (let [start-task (future
+                             (start! channel ["ack-first"]
+                                     (fn [frame]
+                                       (when (= "start-ack" (:type frame))
+                                         (deliver ack-entered true)
+                                         @release-ack)
+                                       (swap! sent conj frame))))]
+            (helper/await-condition #(realized? ack-entered) 5000)
+            (should-not @ran?)
+            (deliver release-ack true)
+            @start-task
+            (helper/await-condition #(exited? @sent) 5000))))
+      (should= "start-ack" (:type (first @sent)))
+      (should @ran?)))
+
   (it "runs a command that carries no hosted marker on an embedded task (isaac-dqy9)"
     ;; The transitional :hosted marker is gone: every command embeds, and a
     ;; command the registry never marked runs on a server thread all the same.

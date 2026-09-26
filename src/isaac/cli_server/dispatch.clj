@@ -145,6 +145,7 @@
   (if-let [{:keys [stderr code]} (or (scope-refusal argv) (stale-refusal argv))]
     {:refusal {:stderr stderr :code code}}
     (let [stdin-queue (LinkedBlockingQueue.)
+          start-gate  (promise)
           cli-host    (host/embedded-host {:in (frame-reader stdin-queue)
                                            :out (line-writer stream-id "stdout")
                                            :err (line-writer stream-id "stderr")
@@ -152,10 +153,12 @@
                                            :cwd (or *server-root* ".")
                                            :tty? stdout-tty})
           task        (future
+                        @start-gate
                         (host/run-embedded* cli-host {:argv argv
                                                       :root (or *server-root* (nexus/get :root))}))]
       {:host cli-host
        :stdin-queue stdin-queue
+       :start-gate start-gate
        :task task})))
 
 (defn- channel-key [channel]
@@ -240,19 +243,21 @@
         (schedule-grace-expiry! stream-id)))))
 
 (defn- route-frame! [stream-id frame]
-  (if (attached? stream-id)
-    (send-live-frame! stream-id frame)
-    (buffer-frame! stream-id frame)))
+  (locking streams
+    (if (attached? stream-id)
+      (send-live-frame! stream-id frame)
+      (buffer-frame! stream-id frame))))
 
 (defn- command-timeout-ms [runtime]
   (some-> (:config runtime) deref (get-in [:cli-server :timeout-ms])))
 
 (defn- finish-task! [stream-id exit-code]
-  (swap! streams assoc-in [stream-id :exited?] true)
-  (log-command-finished! stream-id :code exit-code)
-  (route-frame! stream-id {:type "exit" :code exit-code})
-  (when (attached? stream-id)
-    (swap! streams dissoc stream-id)))
+  (locking streams
+    (swap! streams assoc-in [stream-id :exited?] true)
+    (log-command-finished! stream-id :code exit-code)
+    (route-frame! stream-id {:type "exit" :code exit-code})
+    (when (attached? stream-id)
+      (swap! streams dissoc stream-id))))
 
 (defn- await-task! [stream-id task cli-host runtime]
   (future
@@ -315,6 +320,8 @@
     (bind-channel! channel stream-id)
     (log-command-started! stream-id argv)
     (send-frame! send! {:type "start-ack" :stream-id stream-id})
+    (when-let [gate (:start-gate execution)]
+      (deliver gate true))
     (if-let [{:keys [stderr code]} (:refusal execution)]
       (do
         (route-frame! stream-id {:type "stderr" :data (b64-encode stderr)})
@@ -323,16 +330,17 @@
     stream-id))
 
 (defn- attach-stream! [channel stream-id send!]
-  (if-let [{:keys [buffer exited?]} (stream-state stream-id)]
-    (do
-      (clear-grace-token! stream-id)
-      (swap! streams update stream-id assoc :abandoned? false :buffer [] :channel channel :send! send! :grace-task nil)
-      (bind-channel! channel stream-id)
-      (doseq [frame buffer]
-        (send-frame! send! frame))
-      (when exited?
-        (swap! streams dissoc stream-id)))
-    (send-error! send! (str "unknown stream-id: " stream-id))))
+  (locking streams
+    (if-let [{:keys [buffer exited?]} (stream-state stream-id)]
+      (do
+        (clear-grace-token! stream-id)
+        (swap! streams update stream-id assoc :abandoned? false :buffer [] :channel channel :send! send! :grace-task nil)
+        (bind-channel! channel stream-id)
+        (doseq [frame buffer]
+          (send-frame! send! frame))
+        (when exited?
+          (swap! streams dissoc stream-id)))
+      (send-error! send! (str "unknown stream-id: " stream-id)))))
 
 (defn -send-stdin! [stream-id data]
   (when-let [^LinkedBlockingQueue queue (:stdin-queue (stream-state stream-id))]
