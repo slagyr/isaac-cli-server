@@ -1,10 +1,14 @@
 (ns isaac.cli-server.handbook-chapter-spec
   "Lint for isaac-cli-server's own handbook chapter (isaac-erjv): every
-   backtick `config:<path>` reference must resolve against the composed
-   config schema, and every `isaac <command>` invocation must name a
-   registered top-level CLI command. See the convention comment at the top
-   of the chapter file itself, and isaac.foundation.handbook-chapter-spec
-   for the pattern this follows.
+   backtick `config:<dotted.path>` reference (no angle-bracket placeholder
+   inside the path) must resolve against the composed config schema, and
+   the word right after `isaac ` in every `isaac <command>` invocation
+   must name a registered top-level CLI command. Keep both literal and
+   real when you write one — this lint fails the build once either drifts
+   from what Isaac actually exposes. `<placeholder>` shapes (e.g.
+   `config:<dotted.path>` itself, or `<module-id>#<slug>`) are
+   intentionally skipped. See isaac.foundation.handbook-chapter-spec for
+   the pattern this follows.
 
    isaac-cli-server's own manifest does not declare :builtin? true, and
    this bean intentionally does not add it (:builtin? also controls eager

@@ -1,17 +1,3 @@
-<!--
-Lint convention (isaac.cli-server.handbook-chapter-spec, isaac-erjv): a
-backtick `config:<dotted.path>` reference (no angle-bracket placeholder
-inside the path) is checked against the composed config schema, and the
-word right after `isaac ` in `isaac <command>` is checked against the
-registered top-level CLI commands. Keep both literal and real when you
-write one — the lint fails the build once either drifts from what Isaac
-actually exposes. `<placeholder>` shapes (e.g. `config:<dotted.path>`
-itself, or `<module-id>#<slug>`) are intentionally skipped. isaac-cli-server
-is not `:builtin? true` (deliberately — see the spec's docstring), so its
-own lint composes the schema from `isaac.module.discovery/builtin-index`
-plus this module's own raw manifest resource, not `builtin-index` alone.
--->
-
 # isaac.cli-server — remote CLI execution over `/cli`
 
 You are a crew running inside Isaac. This chapter covers what

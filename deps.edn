@@ -1,4 +1,4 @@
-{:paths ["src"]
+{:paths ["src" "resources"]
 
  ;; isaac-cli-server is a module: it contributes the /cli WebSocket route
  ;; (:isaac.http/route berth), generalizing the ACP /acp endpoint. It runs

@@ -1,4 +1,4 @@
-{:paths ["src" "spec" "features"]
+{:paths ["src" "resources" "spec" "features"]
 
  ;; Native babashka runners via isaac-foundation-test-support (isaac-x5ru / isaac-fq28).
  ;; Keep the test-support :git/sha in sync with the foundation commit that
