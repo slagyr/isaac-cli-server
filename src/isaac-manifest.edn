@@ -2,6 +2,7 @@
  :version     "0.2.2"
  :factory     isaac.module.protocol/module
  :description "Remote CLI server: a /cli WebSocket endpoint that runs hosted commands in-process and pipes command IO back. See PROTOCOL.md."
+ :handbook    "isaac/cli_server/handbook.md"
 
  :isaac.config/schema
  {:cli-server

@@ -8,9 +8,9 @@
  ;; Tests run via `bb spec` / `bb features` (see bb.edn). JVM aliases below
  ;; are optional escape hatches sharing the :test classpath.
  :deps  {io.github.slagyr/isaac-foundation {:git/url "https://github.com/slagyr/isaac-foundation.git"
-                                            :git/sha "e4da6e0c5e0d6c2390e33437f08a27f42bccaeb0"}
+                                            :git/sha "0c6e881e4047f650c43d2772dde617aab66f2bd7"}
          io.github.slagyr/isaac-http     {:git/url "https://github.com/slagyr/isaac-http.git"
-                                            :git/sha "8e01658366f6edddab9ff1fa5b857d12231add3b"}
+                                            :git/sha "42e302f3586737543fd8eb3393ae2d9bfcdad977"}
          clout/clout                       {:mvn/version "1.1.0"}
          com.cleancoders.c3kit/apron       {:mvn/version "3.0.0"}
          cheshire/cheshire                 {:mvn/version "5.13.0"}
@@ -29,13 +29,13 @@
 
   :test      {:extra-paths ["spec" "features"]
               :extra-deps  {io.github.slagyr/isaac-foundation-spec         {:git/url "https://github.com/slagyr/isaac-foundation.git"
-                                                                          :git/sha "e4da6e0c5e0d6c2390e33437f08a27f42bccaeb0"
+                                                                          :git/sha "0c6e881e4047f650c43d2772dde617aab66f2bd7"
                                                                           :deps/root "spec"}
                             io.github.slagyr/isaac-foundation-test-support {:git/url "https://github.com/slagyr/isaac-foundation.git"
-                                                                              :git/sha "e4da6e0c5e0d6c2390e33437f08a27f42bccaeb0"
+                                                                              :git/sha "0c6e881e4047f650c43d2772dde617aab66f2bd7"
                                                                               :deps/root "spec-support"}
                             io.github.slagyr/isaac-http-test-support     {:git/url "https://github.com/slagyr/isaac-http.git"
-                                                                              :git/sha "8e01658366f6edddab9ff1fa5b857d12231add3b"
+                                                                              :git/sha "42e302f3586737543fd8eb3393ae2d9bfcdad977"
                                                                               :deps/root "spec-support"}
                             speclj/speclj                                  {:mvn/version "3.13.0"}
                             io.github.slagyr/gherclj                       {:git/tag "v1.3.0" :git/sha "9c3bb1d"}
