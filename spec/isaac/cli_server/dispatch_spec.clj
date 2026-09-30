@@ -2,11 +2,11 @@
   (:require
     [cheshire.core :as json]
     [isaac.cli-server.dispatch :as sut]
-    [isaac.cli.host :as host]
-    [isaac.cli.registry :as registry]
-    [isaac.logger :as log]
-    [isaac.nexus :as nexus]
-    [isaac.spec-helper :as helper]
+    [isaac.foundation.cli.host :as host]
+    [isaac.foundation.cli.registry :as registry]
+    [isaac.foundation.logger :as log]
+    [isaac.foundation.nexus :as nexus]
+    [isaac.foundation.spec-helper :as helper]
     [speclj.core :refer :all]))
 
 (defn- decode-data [frame]

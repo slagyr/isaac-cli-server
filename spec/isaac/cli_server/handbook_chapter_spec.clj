@@ -16,18 +16,18 @@
    per isaac-imessage's handbook-chapter-lint precedent). Instead this
    spec builds its own module index by reading the raw isaac-manifest.edn
    classpath resource directly and merging it into
-   isaac.module.discovery/builtin-index — enough for schema-compose to see
+   isaac.foundation.module.discovery/builtin-index — enough for schema-compose to see
    this module's :cli-server config contribution, without touching how the
    module loads at runtime."
   (:require
     [clojure.edn :as edn]
     [clojure.java.io :as io]
     [clojure.string :as str]
-    [isaac.config.schema-compose :as schema-compose]
-    [isaac.config.schema.resolve :as schema-resolve]
-    [isaac.fs :as fs]
-    [isaac.module.discovery :as discovery]
-    [isaac.nexus :as nexus]
+    [isaac.foundation.config.schema-compose :as schema-compose]
+    [isaac.foundation.config.schema.resolve :as schema-resolve]
+    [isaac.foundation.fs :as fs]
+    [isaac.foundation.module.discovery :as discovery]
+    [isaac.foundation.nexus :as nexus]
     [speclj.core :refer :all]))
 
 (def ^:private chapter-resource "isaac/cli_server/handbook.md")
@@ -70,7 +70,7 @@
 (defn- known-cli-commands
   "Top-level command names contributed to the :isaac/cli berth by every
    module in `index` — read directly off each module's manifest rather
-   than through isaac.module.berths, whose report helpers vary across
+   than through isaac.foundation.module.berths, whose report helpers vary across
    pinned foundation shas."
   [index]
   (->> (vals index)

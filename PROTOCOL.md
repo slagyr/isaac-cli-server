@@ -84,7 +84,7 @@ persist lock — one writer, no second process racing the files it is mid-turn o
 - The client never names a binary. It supplies `argv` only, and `argv` selects a
   command from the registry — never a program on disk.
 - `System/exit`, stdio, env, cwd, tty, and shutdown hooks are mediated by the CLI
-  host (`isaac.cli.host`), so an exiting or throwing command is contained and the
+  host (`isaac.foundation.cli.host`), so an exiting or throwing command is contained and the
   server keeps serving.
 - Commands marked `:local-only` in their module manifest (`server`, `service`,
   `modules install|upgrade`, `remote`) are **refused over the pipe** with

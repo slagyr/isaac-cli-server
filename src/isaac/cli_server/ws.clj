@@ -9,7 +9,7 @@
   (:require
     [cheshire.core :as json]
     [isaac.cli-server.dispatch :as dispatch]
-    [isaac.logger :as log]
+    [isaac.foundation.logger :as log]
     [org.httpkit.server :as httpkit]))
 
 (defn- request-client [request]

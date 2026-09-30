@@ -2,12 +2,12 @@
   (:require
     [cheshire.core :as json]
     [clojure.string :as str]
-    [isaac.cli.args :as cli-args]
-    [isaac.cli.host :as host]
-    [isaac.cli.registry :as registry]
-    [isaac.logger :as log]
-    [isaac.nexus :as nexus]
-    [isaac.startup.classpath-cache :as classpath-cache]
+    [isaac.foundation.cli.args :as cli-args]
+    [isaac.foundation.cli.host :as host]
+    [isaac.foundation.cli.registry :as registry]
+    [isaac.foundation.logger :as log]
+    [isaac.foundation.nexus :as nexus]
+    [isaac.foundation.startup.classpath-cache :as classpath-cache]
     [ring.util.codec :as codec])
   (:import
     (java.util UUID)
