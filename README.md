@@ -3,8 +3,8 @@
 <img align="left" width="200" src="https://raw.githubusercontent.com/slagyr/isaac-cli-server/main/isaac-cli-server.png" alt="isaac-cli-server" style="margin-right: 20px; margin-bottom: 10px;">
 
 Remote CLI host for [Isaac](https://github.com/slagyr/isaac). Exposes the
-authenticated `/cli` WebSocket endpoint: spawns the real isaac launcher as a
-subprocess and streams stdin/stdout/stderr back to the client.
+authenticated `/cli` WebSocket endpoint: runs the command in-process on a server
+worker thread and streams stdin/stdout/stderr back to the client.
 
 Pairs with [isaac-cli-proxy](https://github.com/slagyr/isaac-cli-proxy)
 (`isaac remote …`). Wire protocol: [PROTOCOL.md](PROTOCOL.md).
