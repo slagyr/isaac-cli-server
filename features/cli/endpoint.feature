@@ -51,7 +51,6 @@ Feature: /cli WebSocket endpoint
 
   # fx-config prints the value at its argument's key in the :config its run-fn
   # receives, or "nil".
-  @wip
   Scenario: a hosted command receives the server's live config, as a local run does (isaac-y3go)
     Given the cli-server handler with the fixture commands registered
     And the server's live config is:

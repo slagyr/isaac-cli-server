@@ -94,6 +94,10 @@
                                    0)})
     (registry/register! {:name "fx-print"
                          :run-fn (fn [{:keys [_raw-args]}] (println (str/join " " _raw-args)) 0)})
+    (registry/register! {:name "fx-config"
+                         :run-fn (fn [{:keys [config _raw-args]}]
+                                   (println (get config (keyword (first _raw-args))))
+                                   0)})
     (registry/register! {:name "fx-read" :read-only true
                          :run-fn (fn [_] (println "read ok") 0)})
     (registry/register! {:name "fx-multi" :read-only #{"list"}
@@ -113,6 +117,9 @@
   (install-handler!)
   (nexus/init! {:root "/srv/isaac"})
   (register-fixture-commands!))
+
+(defn server-live-config-is [text]
+  (reset! (nexus/get :config) (edn/read-string text)))
 
 (defn cli-server-handler-with-fixture-commands-and-grace [grace-ms]
   (cli-server-handler-with-fixture-commands)
@@ -246,6 +253,7 @@
 (defgiven "the cli-server handler with the fixture commands registered" isaac.cli-server.cli-server-steps/cli-server-handler-with-fixture-commands)
 (defgiven #"^the cli-server handler with the fixture commands registered and grace window (\d+) ms$"
   isaac.cli-server.cli-server-steps/cli-server-handler-with-fixture-commands-and-grace)
+(defgiven "the server's live config is:" isaac.cli-server.cli-server-steps/server-live-config-is)
 (defgiven "the server process state is snapshotted" isaac.cli-server.cli-server-steps/process-state-snapshotted)
 (defgiven "the server's loaded module basis is behind the on-disk basis" isaac.cli-server.cli-server-steps/server-basis-behind)
 (defgiven "the /cli client is principal {name:string} with scopes {scopes:string}"
